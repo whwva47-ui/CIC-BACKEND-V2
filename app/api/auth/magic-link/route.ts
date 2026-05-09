@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error('[magic-link] Supabase error:', error.status, error.message);
     if (error.status === 429) return NextResponse.json({ error: 'Too many requests. Wait a minute.' }, { status: 429, headers: OPEN });
-    return NextResponse.json({ error: error.message || 'Could not send magic link.', code: error.status }, { status: 500, headers: OPEN });
+    return NextResponse.json({ error: error.message, code: error.status }, { status: 500, headers: OPEN });;
   }
 
   if (referralCode) {
