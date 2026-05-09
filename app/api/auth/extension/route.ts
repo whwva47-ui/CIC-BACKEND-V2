@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-// Legacy auth route — kept for v1.1.0 extension operators not yet updated
+// Legacy auth route -- kept for v1.1.0 extension operators not yet updated
 // New operators use /api/auth/session-login instead
 const OPEN = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key' };
 

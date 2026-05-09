@@ -1,4 +1,4 @@
-// Platform origins — content scripts run on these pages
+// Platform origins -- content scripts run on these pages
 export const PLATFORM_ORIGINS = [
   'chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp',
   'https://chattersinnercircle.vercel.app',
@@ -19,7 +19,7 @@ export const PLATFORM_ORIGINS = [
   'http://localhost:3000',
 ];
 
-// Auth origins — only extension and web apps
+// Auth origins -- only extension and web apps
 export const AUTH_ORIGINS = [
   'chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp',
   'https://chattersinnercircle.vercel.app',
