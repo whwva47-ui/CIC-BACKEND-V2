@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
   if (userEmail) {
     const { data: profile } = await getSupabase()
       .from('profiles')
-      .select('plan, plan_status, daily_generations, max_daily_generations, last_generation_date, trial_ends_at, plan_expires_at, explicit_enabled, replies_per_period, period_days')
+      .select('plan, plan_status, daily_generations, max_daily_generations, last_generation_date, total_generations, trial_ends_at, plan_expires_at, explicit_enabled, replies_per_period, period_days')
       .eq('email', userEmail)
       .maybeSingle();
 
