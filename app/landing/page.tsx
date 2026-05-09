@@ -61,7 +61,7 @@ export default function LandingPage() {
       const r = await fetch('/api/auth/magic-link', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, phone, referralCode: referral || undefined })
+        body:    JSON.stringify({ email, referralCode: referral || undefined })
       })
       const d = await r.json()
       if (d.success) setStep('sent')
