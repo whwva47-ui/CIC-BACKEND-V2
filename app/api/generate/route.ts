@@ -10,6 +10,26 @@ function getSupabase() {
   );
 }
 
+const ALLOWED_ORIGINS = [
+  'chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp',
+  'https://cic-app.pages.dev',
+  'https://chattersinnercircle.vercel.app',
+  'https://chathomebase.com',
+  'https://www.chathomebase.com',
+  'https://alpha.date',
+  'https://www.alpha.date',
+  'https://onlyfans.com',
+  'https://fansly.com',
+  'https://loyalfans.com',
+  'https://fancentro.com',
+  'https://admireme.vip',
+  'https://fanvue.com',
+  'https://www.manyvids.com',
+  'https://unlockd.com',
+  'https://agents.moderationinterface.com',
+  'http://localhost:3000',
+];
+
 function cors(origin: string | null) {
   // If origin is in our allowed list, echo it back exactly.
   // If not (or null -- same-origin / server-side calls), allow cic-app.pages.dev.
