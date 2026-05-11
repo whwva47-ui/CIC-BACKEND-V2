@@ -17,13 +17,9 @@ export async function GET(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // Exchange auth code for session
   if (code) {
     await supabase.auth.exchangeCodeForSession(code);
   }
 
-  // Redirect to dashboard
-  return NextResponse.redirect(
-    `${SITE}/dashboard`
-  );
+  return NextResponse.redirect(`${SITE}/dashboard`);
 }
