@@ -33,66 +33,151 @@ export default function LandingPage() {
     setLoading(false)
   }
 
-  // EMAIL SENT SCREEN
   if (step === 'sent') {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="max-w-md text-center px-6">
+      <div style={{
+        minHeight:'100vh',
+        background:'#050510',
+        color:'white',
+        display:'flex',
+        alignItems:'center',
+        justifyContent:'center',
+        fontFamily:'sans-serif'
+      }}>
 
-          <h1 className="text-5xl font-bold mb-6 text-purple-500">
+        <div style={{
+          maxWidth:'500px',
+          textAlign:'center',
+          padding:'40px'
+        }}>
+
+          <h1 style={{
+            fontSize:'52px',
+            fontWeight:'800',
+            marginBottom:'24px',
+            background:'linear-gradient(135deg,#a855f7,#fbbf24)',
+            WebkitBackgroundClip:'text',
+            WebkitTextFillColor:'transparent'
+          }}>
             Check Your Email
           </h1>
 
-          <p className="text-gray-400 text-xl leading-9">
+          <p style={{
+            color:'#94a3b8',
+            fontSize:'22px',
+            lineHeight:'1.8'
+          }}>
             We sent a magic link to
             <br />
 
-            <span className="text-white font-semibold">
+            <span style={{
+              color:'white',
+              fontWeight:'700'
+            }}>
               {email}
             </span>
           </p>
 
         </div>
+
       </div>
     )
   }
 
-  // SIGNUP SCREEN
   return (
-    <div className="min-h-screen bg-black text-white flex items-center justify-center">
+    <div style={{
+      minHeight:'100vh',
+      background:'#050510',
+      color:'white',
+      display:'flex',
+      alignItems:'center',
+      justifyContent:'center',
+      fontFamily:'sans-serif'
+    }}>
 
-      <div className="max-w-2xl w-full text-center px-6">
+      <div style={{
+        maxWidth:'900px',
+        width:'100%',
+        textAlign:'center',
+        padding:'40px'
+      }}>
 
-        <div className="inline-block px-4 py-2 border border-purple-500 rounded-full text-purple-400 text-sm mb-6">
-          AI Reply Assistant
+        <div style={{
+          display:'inline-block',
+          padding:'8px 18px',
+          border:'1px solid rgba(168,85,247,0.4)',
+          borderRadius:'999px',
+          color:'#c084fc',
+          fontSize:'13px',
+          marginBottom:'30px'
+        }}>
+          AI Reply Assistant • 10+ Platforms
         </div>
 
-        <h1 className="text-6xl font-bold leading-tight mb-6">
+        <h1 style={{
+          fontSize:'72px',
+          fontWeight:'900',
+          lineHeight:'1.1',
+          marginBottom:'24px'
+        }}>
           Replies That Get Him
           <br />
 
-          <span className="bg-gradient-to-r from-purple-500 to-yellow-400 text-transparent bg-clip-text">
+          <span style={{
+            background:'linear-gradient(135deg,#a855f7,#fbbf24)',
+            WebkitBackgroundClip:'text',
+            WebkitTextFillColor:'transparent'
+          }}>
             Hooked Every Time
           </span>
         </h1>
 
-        <p className="text-gray-400 text-lg leading-8 mb-10">
+        <p style={{
+          color:'#94a3b8',
+          fontSize:'22px',
+          lineHeight:'1.7',
+          maxWidth:'700px',
+          margin:'0 auto 40px'
+        }}>
           Smart AI replies for operators on dating and subscription platforms.
         </p>
 
-        <div className="flex gap-4 max-w-2xl mx-auto">
+        <div style={{
+          display:'flex',
+          gap:'14px',
+          maxWidth:'700px',
+          margin:'0 auto'
+        }}>
 
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Enter your email"
-            className="flex-1 bg-[#111] border border-[#222] rounded-xl px-5 py-4 text-white outline-none"
+            style={{
+              flex:1,
+              background:'#111827',
+              border:'1px solid #27272a',
+              borderRadius:'14px',
+              padding:'18px 22px',
+              color:'white',
+              fontSize:'18px',
+              outline:'none'
+            }}
           />
 
           <button
             onClick={handleSignup}
             disabled={loading}
-            className="px-8 py-4 rounded-xl bg-gradient-to-r from-purple-600 to-yellow-500 font-bold"
+            style={{
+              padding:'18px 34px',
+              border:'none',
+              borderRadius:'14px',
+              background:'linear-gradient(135deg,#7c3aed,#fbbf24)',
+              color:'white',
+              fontWeight:'700',
+              fontSize:'17px',
+              cursor:'pointer'
+            }}
           >
             {loading ? 'Sending...' : 'Get Started'}
           </button>
