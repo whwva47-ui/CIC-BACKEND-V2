@@ -13,7 +13,7 @@ const space = Space_Grotesk({
 })
 
 export const metadata = {
-  title: 'CIC',
+  title: "Chatter's Inner Circle",
   description: 'AI Reply Assistant'
 }
 
@@ -24,9 +24,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body
-        className={`${inter.variable} ${space.variable}`}
-      >
+      <body className={`${inter.variable} ${space.variable}`}>
         {children}
       </body>
     </html>
