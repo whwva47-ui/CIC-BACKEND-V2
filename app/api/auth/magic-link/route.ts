@@ -12,7 +12,7 @@ const OPEN = {
 
 const SITE =
   process.env.NEXT_PUBLIC_SITE_URL ||
-  '[chattersinnercircle.vercel.app](https://chattersinnercircle.vercel.app)';
+  'https://chattersinnercircle.vercel.app';
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: OPEN });
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await anon.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${SITE}/landing`,
+        emailRedirectTo: `${SITE}/dashboard`,
         shouldCreateUser: true,
       },
     });
@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (err: any) {
     console.error('[magic-link] Unexpected error:', err);
+
     return NextResponse.json(
       { error: 'Unexpected server error.' },
       { status: 500, headers: OPEN }
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
+
       await db
         .from('pro_requests')
         .insert({
@@ -100,5 +102,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true }, { headers: OPEN });
+  return NextResponse.json(
+    { success: true },
+    { headers: OPEN }
+  );
 }
