@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL || 'https://chattersinnercircle.vercel.app'
 
@@ -14,44 +14,9 @@ export default function LandingPage() {
   const [loading, setLoading] = useState(false)
   const [msg, setMsg]         = useState('')
   const [guideTab, setGuideTab] = useState('cat1')
-  const [tokenLoading, setTokenLoading] = useState(false)
   const [photoPreview, setPhotoPreview] = useState<string|null>(null)
   const [photoCompliments, setPhotoCompliments] = useState<string[]>([])
   const [photoLoading, setPhotoLoading] = useState(false)
-
-  // -- Item 3: Webapp token handler ---------------------------------
-  // When operator logs in via extension popup, they land here with ?token=
-  // We validate it and redirect to the app with their session set
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const token  = params.get('token')
-    if (!token) return
-
-    // Remove token from URL immediately
-    window.history.replaceState({}, document.title, window.location.pathname)
-    setTokenLoading(true)
-
-    fetch(`${SITE}/api/auth/verify-token`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token })
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.user) {
-        // Save session and redirect to the webapp
-        localStorage.setItem('cic_user', JSON.stringify(data.user))
-        window.location.href = 'https://cic-app.pages.dev'
-      } else {
-        setTokenLoading(false)
-        setMsg(data.error || 'Login link expired. Please sign in again from the extension.')
-        setStep('signup')
-      }
-    })
-    .catch(() => {
-      setTokenLoading(false)
-    })
-  }, [])
 
   async function handleSignup() {
     if (!email || !email.includes('@')) { setMsg('Please enter a valid email address.'); return }
@@ -71,29 +36,6 @@ export default function LandingPage() {
     }
     setLoading(false)
   }
-
-  // -- Token loading screen ------------------------------------------
-  if (tokenLoading) return (
-    <div style={{minHeight:'100vh',background:'#080810',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'sans-serif'}}>
-      <div style={{textAlign:'center'}}>
-        <div style={{width:'40px',height:'40px',border:'3px solid rgba(168,85,247,0.3)',borderTopColor:'#a855f7',borderRadius:'50%',animation:'spin 0.8s linear infinite',margin:'0 auto 16px'}}/>
-        <div style={{color:'#a855f7',fontSize:'14px'}}>Signing you in...</div>
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      </div>
-    </div>
-  )
-
-  // -- Email sent screen ---------------------------------------------
-  if (step === 'sent') return (
-    <div style={{minHeight:'100vh',background:'#080810',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'sans-serif'}}>
-      <div style={{textAlign:'center',padding:'40px',maxWidth:'440px'}}>
-        <div style={{fontSize:'56px',marginBottom:'16px'}}> </div>
-        <h2 style={{color:'#a855f7',marginBottom:'12px'}}>Check Your Email</h2>
-        <p style={{color:'#71767b',lineHeight:'1.6'}}>We sent a magic link to <b style={{color:'#e2e8f0'}}>{email}</b>. Click it to sign in. Expires in 1 hour.</p>
-        <button onClick={()=>setStep('home')} style={{marginTop:'24px',padding:'10px 24px',background:'transparent',border:'1px solid #1e1e32',borderRadius:'8px',color:'#71767b',cursor:'pointer',fontFamily:'sans-serif'}}>  Back</button>
-      </div>
-    </div>
-  )
 
   // -- Signup screen -------------------------------------------------
   if (step === 'signup') return (
