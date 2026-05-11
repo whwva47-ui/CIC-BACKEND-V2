@@ -249,35 +249,3 @@ export default function DashboardPage() {
     </div>
   )
 }
-```
-
-# ALSO UPDATE THIS
-
-Inside:
-
-```txt
-app/globals.css
-```
-
-ADD THIS at the bottom:
-
-```css
-.heading-font {
-  font-family: var(--font-space);
-}
-
-body {
-  font-family: var(--font-inter);
-  background: #050510;
-}
-```
-
-This rebuild gives:
-
-* floating glassmorphism cards
-* cinematic typography
-* hover animations
-* premium AI SaaS aesthetic
-* modern workspace feel
-* proper sidebar hierarchy
-* much stronger visual presence than the current version
