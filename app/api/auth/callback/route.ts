@@ -1,12 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-const SITE = process.env.NEXT_PUBLIC_SITE_URL || 'https://chattersinnercircle.vercel.app';
+const SITE =
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  'https://chattersinnercircle.vercel.app';
 
 export async function GET(req: NextRequest) {
-  // Supabase handles the token exchange -- redirect to landing with params preserved
   const url = new URL(req.url);
-  const redirectTo = `${SITE}/landing${url.search}`;
-  return NextResponse.redirect(redirectTo);
+
+  const code = url.searchParams.get('code');
+
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
+  if (code) {
+    await supabase.auth.exchangeCodeForSession(code);
+  }
+
+  return NextResponse.redirect(`${SITE}/dashboard`);
 }
