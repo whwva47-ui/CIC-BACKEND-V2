@@ -1,29 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { NextResponse } from 'next/server';
 
-export const dynamic = 'force-dynamic';
-
-const SITE =
-  process.env.NEXT_PUBLIC_SITE_URL ||
-  'https://chattersinnercircle.vercel.app';
-
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-
-  const code = url.searchParams.get('code');
-
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
-
-  // Exchange auth code for session
-  if (code) {
-    await supabase.auth.exchangeCodeForSession(code);
-  }
-
-  // Redirect authenticated user to dashboard
-  return NextResponse.redirect(
-    `${SITE}/dashboard`
-  );
+export async function GET() {
+  return NextResponse.json({
+    callback: 'working'
+  });
 }
