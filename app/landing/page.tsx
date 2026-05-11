@@ -32,26 +32,34 @@ export default function LandingPage() {
     setTokenLoading(true)
 
     fetch(`${SITE}/api/auth/verify-token`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token })
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.user) {
-        // Save session and redirect to the webapp
-        localStorage.setItem('cic_user', JSON.stringify(data.user))
-        window.location.href = 'https://cic-app.pages.dev'
-      } else {
-        setTokenLoading(false)
-        setMsg(data.error || 'Login link expired. Please sign in again from the extension.')
-        setStep('signup')
-      }
-    })
-    .catch(() => {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ token })
+})
+  .then(r => r.json())
+  .then(data => {
+    if (data.user) {
+      // Save session and redirect to dashboard
+      localStorage.setItem(
+        'cic_user',
+        JSON.stringify(data.user)
+      )
+
+      window.location.href = '/dashboard'
+    } else {
       setTokenLoading(false)
-    })
-  }, [])
+
+      setMsg(
+        data.error ||
+        'Login link expired. Please sign in again from the extension.'
+      )
+
+      setStep('signup')
+    }
+  })
+  .catch(() => {
+    setTokenLoading(false)
+  })
 
   async function handleSignup() {
     if (!email || !email.includes('@')) { setMsg('Please enter a valid email address.'); return }
