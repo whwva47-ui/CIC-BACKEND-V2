@@ -36,18 +36,26 @@ export default function LandingPage() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ token })
     })
-    .then(r => r.json())
-    .then(data => {
-      if (data.user) {
-        // Save session and redirect to the webapp
-        localStorage.setItem('cic_user', JSON.stringify(data.user))
-        window.location.href = 'https://cic-app.pages.dev'
-      } else {
-        setTokenLoading(false)
-        setMsg(data.error || 'Login link expired. Please sign in again from the extension.')
-        setStep('signup')
-      }
-    })
+ .then(data => {
+  if (data.user) {
+    // Save session and redirect to dashboard
+    localStorage.setItem(
+      'cic_user',
+      JSON.stringify(data.user)
+    )
+
+    window.location.href = '/dashboard'
+  } else {
+    setTokenLoading(false)
+
+    setMsg(
+      data.error ||
+      'Login link expired. Please sign in again from the extension.'
+    )
+
+    setStep('signup')
+  }
+})
     .catch(() => {
       setTokenLoading(false)
     })
