@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await anon.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${SITE}/landing`,
+        emailRedirectTo: `${SITE}/api/auth/callback`,
         shouldCreateUser: true,
       },
     });
