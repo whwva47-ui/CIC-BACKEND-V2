@@ -1,27 +1,38 @@
 'use client'
 
+import { useState } from 'react'
+
 export default function DashboardPage() {
+  const [activeTab, setActiveTab] = useState('live demo')
+
+  const sidebar = [
+    'Live Demo',
+    'Extensions',
+    'Install Guide',
+    'AI Functions',
+    'Analytics',
+    'Billing',
+    'Settings',
+  ]
+
   const packages = [
     {
       title: 'Texting Factory',
-      price: '$19',
-      desc: 'Optimized for TF operators with fast AI reply workflows.',
-      button: 'Install Extension',
-      glow: 'rgba(168,85,247,0.45)'
+      price: '$19/mo',
+      desc: 'Optimized for Texting Factory workflows and fast AI reply generation.',
+      download: 'TEXTING_FACTORY_EXTENSION_LINK'
     },
     {
       title: 'General Platforms',
-      price: '$39',
-      desc: 'Works with Alpha.date, OF, Fansly and multiple platforms.',
-      button: 'Install Extension',
-      glow: 'rgba(236,72,153,0.45)'
+      price: '$39/mo',
+      desc: 'Supports Alpha.date, OF, Fansly and multi-platform workflows.',
+      download: 'GENERAL_PLATFORMS_EXTENSION_LINK'
     },
     {
       title: 'Premium AI Suite',
-      price: '$79',
-      desc: 'Advanced AI memory, custom personalities and analytics.',
-      button: 'Upgrade Premium',
-      glow: 'rgba(251,191,36,0.45)'
+      price: '$79/mo',
+      desc: 'Advanced AI memory, engagement analytics and custom personalities.',
+      download: 'PREMIUM_UPGRADE_LINK'
     }
   ]
 
@@ -36,7 +47,6 @@ export default function DashboardPage() {
         fontFamily: 'var(--font-inter)',
       }}
     >
-      {/* SIDEBAR */}
       <div
         style={{
           width: '290px',
@@ -67,7 +77,7 @@ export default function DashboardPage() {
             CIC
           </span>
           <br />
-          Dashboard
+          Workspace
         </div>
 
         <div
@@ -77,23 +87,15 @@ export default function DashboardPage() {
             gap: '14px',
           }}
         >
-          {[
-            'Live Demo',
-            'Extensions',
-            'AI Tools',
-            'Install Guide',
-            'Analytics',
-            'Referrals',
-            'Billing',
-            'Settings',
-          ].map((item, index) => (
+          {sidebar.map((item) => (
             <div
               key={item}
+              onClick={() => setActiveTab(item.toLowerCase())}
               style={{
                 padding: '16px 18px',
                 borderRadius: '18px',
                 background:
-                  index === 0
+                  activeTab === item.toLowerCase()
                     ? 'linear-gradient(135deg,#7c3aed,#ec4899)'
                     : 'rgba(255,255,255,0.04)',
                 border: '1px solid rgba(255,255,255,0.06)',
@@ -101,10 +103,6 @@ export default function DashboardPage() {
                 fontWeight: '600',
                 cursor: 'pointer',
                 transition: '0.25s',
-                boxShadow:
-                  index === 0
-                    ? '0 10px 40px rgba(168,85,247,0.35)'
-                    : '0 8px 30px rgba(0,0,0,0.25)',
               }}
             >
               {item}
@@ -113,165 +111,160 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* MAIN */}
       <div
         style={{
           flex: 1,
           padding: '40px',
           overflowY: 'auto',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'flex-start',
         }}
       >
-        {/* HERO */}
-        <div
-          style={{
-            marginBottom: '40px',
-          }}
-        >
+        {activeTab === 'live demo' && (
           <div
             style={{
-              display: 'inline-block',
-              padding: '8px 18px',
-              borderRadius: '999px',
-              background: 'rgba(168,85,247,0.12)',
-              border: '1px solid rgba(168,85,247,0.25)',
-              color: '#d8b4fe',
-              fontSize: '13px',
-              marginBottom: '24px',
-            }}
-          >
-            LIVE OPERATOR WORKSPACE
-          </div>
-
-          <h1
-            className="heading-font"
-            style={{
-              fontSize: '76px',
-              lineHeight: '0.95',
-              fontWeight: '900',
-              letterSpacing: '-4px',
-              marginBottom: '24px',
-              maxWidth: '900px',
-            }}
-          >
-            Watch CIC Generate
-            <br />
-            Replies In Real Time
-          </h1>
-
-          <p
-            style={{
-              color: '#94a3b8',
-              fontSize: '22px',
-              lineHeight: '1.7',
-              maxWidth: '850px',
-            }}
-          >
-            Experience the exact workflow operators use to generate
-            high-converting AI replies across dating and subscription
-            platforms.
-          </p>
-        </div>
-
-        {/* LIVE DEMO */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1.3fr 1fr',
-            gap: '24px',
-            marginBottom: '40px',
-          }}
-        >
-          {/* CHAT WINDOW */}
-          <div
-            style={{
+              width: '100%',
+              maxWidth: '960px',
               background: 'rgba(255,255,255,0.04)',
               border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: '32px',
-              padding: '30px',
-              backdropFilter: 'blur(16px)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+              borderRadius: '34px',
+              padding: '34px',
+              backdropFilter: 'blur(18px)',
+              boxShadow: '0 20px 70px rgba(0,0,0,0.35)',
             }}
           >
             <div
+              className="heading-font"
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '26px',
+                fontSize: '54px',
+                fontWeight: '900',
+                marginBottom: '14px',
+                letterSpacing: '-3px',
+              }}
+            >
+              Extension Live Demo
+            </div>
+
+            <div
+              style={{
+                color: '#94a3b8',
+                marginBottom: '28px',
+                fontSize: '20px',
+              }}
+            >
+              Simulated operator workflow showing the real CIC popup experience.
+            </div>
+
+            <div
+              style={{
+                background: '#09090f',
+                borderRadius: '28px',
+                overflow: 'hidden',
+                border: '1px solid rgba(255,255,255,0.08)',
+                marginBottom: '30px',
               }}
             >
               <div
-                className="heading-font"
                 style={{
-                  fontSize: '28px',
-                  fontWeight: '800',
+                  padding: '18px 24px',
+                  borderBottom: '1px solid rgba(255,255,255,0.06)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  background: 'rgba(255,255,255,0.03)',
                 }}
               >
-                Live AI Reply Demo
+                <div
+                  className="heading-font"
+                  style={{
+                    fontSize: '24px',
+                    fontWeight: '800',
+                  }}
+                >
+                  CIC Assistant
+                </div>
+
+                <div
+                  style={{
+                    color: '#4ade80',
+                    fontWeight: '700',
+                  }}
+                >
+                  ● AI ACTIVE
+                </div>
               </div>
 
-              <div
-                style={{
-                  color: '#4ade80',
-                  fontWeight: '700',
-                  fontSize: '14px',
-                }}
-              >
-                ● ACTIVE
+              <div style={{ padding: '28px' }}>
+                <div
+                  style={{
+                    background: '#111827',
+                    padding: '20px',
+                    borderRadius: '22px',
+                    marginBottom: '24px',
+                    maxWidth: '72%',
+                    lineHeight: '1.8',
+                  }}
+                >
+                  Hey babe 😘 are you free later tonight?
+                </div>
+
+                <div
+                  style={{
+                    marginLeft: 'auto',
+                    background:
+                      'linear-gradient(135deg,#7c3aed,#ec4899)',
+                    padding: '22px',
+                    borderRadius: '22px',
+                    maxWidth: '82%',
+                    lineHeight: '1.8',
+                    marginBottom: '24px',
+                    boxShadow:
+                      '0 14px 40px rgba(168,85,247,0.35)',
+                  }}
+                >
+                  Careful 😏 flirting with me this confidently should probably require supervision.
+                </div>
+
+                <video
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  controls
+                  style={{
+                    width: '100%',
+                    borderRadius: '20px',
+                    border:
+                      '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <source
+                    src="/typing-demo.mp4"
+                    type="video/mp4"
+                  />
+                </video>
               </div>
             </div>
 
-            {/* INCOMING */}
-            <div
-              style={{
-                background: '#111827',
-                padding: '20px',
-                borderRadius: '22px',
-                marginBottom: '20px',
-                maxWidth: '80%',
-              }}
-            >
-              Hey babe 😘 what are you doing tonight?
-            </div>
-
-            {/* AI REPLY */}
-            <div
-              style={{
-                marginLeft: 'auto',
-                background:
-                  'linear-gradient(135deg,#7c3aed,#ec4899)',
-                padding: '20px',
-                borderRadius: '22px',
-                marginBottom: '22px',
-                maxWidth: '85%',
-                boxShadow:
-                  '0 12px 40px rgba(168,85,247,0.35)',
-              }}
-            >
-              Honestly? Probably thinking about how dangerous it is
-              to let you flirt this confidently 😏
-            </div>
-
-            {/* AI STATUS */}
             <div
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(3,1fr)',
-                gap: '16px',
-                marginTop: '30px',
+                gap: '18px',
               }}
             >
               {[
                 ['Reply Speed', '0.8s'],
                 ['Engagement', '94%'],
-                ['AI Active', 'Online'],
+                ['Operators Online', '2,401'],
               ].map((stat) => (
                 <div
                   key={stat[0]}
                   style={{
                     background: 'rgba(255,255,255,0.04)',
-                    borderRadius: '20px',
-                    padding: '18px',
+                    borderRadius: '22px',
+                    padding: '24px',
                     border:
                       '1px solid rgba(255,255,255,0.06)',
                   }}
@@ -279,7 +272,6 @@ export default function DashboardPage() {
                   <div
                     style={{
                       color: '#94a3b8',
-                      fontSize: '13px',
                       marginBottom: '10px',
                     }}
                   >
@@ -289,8 +281,8 @@ export default function DashboardPage() {
                   <div
                     className="heading-font"
                     style={{
-                      fontSize: '26px',
-                      fontWeight: '800',
+                      fontSize: '42px',
+                      fontWeight: '900',
                     }}
                   >
                     {stat[1]}
@@ -299,116 +291,27 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
+        )}
 
-          {/* PERFORMANCE PANEL */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '22px',
-            }}
-          >
-            {[
-              ['Platforms Supported', '10+'],
-              ['Operators Active', '2,400+'],
-              ['Replies Generated', '3.2M'],
-            ].map((item) => (
-              <div
-                key={item[0]}
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: '28px',
-                  padding: '28px',
-                  backdropFilter: 'blur(16px)',
-                  boxShadow:
-                    '0 20px 60px rgba(0,0,0,0.35)',
-                }}
-              >
-                <div
-                  style={{
-                    color: '#94a3b8',
-                    marginBottom: '12px',
-                  }}
-                >
-                  {item[0]}
-                </div>
-
-                <div
-                  className="heading-font"
-                  style={{
-                    fontSize: '54px',
-                    fontWeight: '900',
-                    letterSpacing: '-3px',
-                  }}
-                >
-                  {item[1]}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* PACKAGES */}
-        <div
-          style={{
-            marginTop: '20px',
-          }}
-        >
-          <h2
-            className="heading-font"
-            style={{
-              fontSize: '52px',
-              fontWeight: '900',
-              letterSpacing: '-3px',
-              marginBottom: '28px',
-            }}
-          >
-            Choose Your Package
-          </h2>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns:
-                'repeat(auto-fit,minmax(320px,1fr))',
-              gap: '26px',
-            }}
-          >
+        {activeTab === 'extensions' && (
+          <div style={{ width:'100%', maxWidth:'950px' }}>
             {packages.map((pkg) => (
               <div
                 key={pkg.title}
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: '32px',
-                  padding: '34px',
-                  backdropFilter: 'blur(18px)',
-                  boxShadow:
-                    '0 20px 70px rgba(0,0,0,0.35)',
-                  transition: '0.25s',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform =
-                    'translateY(-10px)'
-                  e.currentTarget.style.boxShadow =
-                    `0 25px 90px ${pkg.glow}`
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform =
-                    'translateY(0px)'
-                  e.currentTarget.style.boxShadow =
-                    '0 20px 70px rgba(0,0,0,0.35)'
+                  background:'rgba(255,255,255,0.04)',
+                  border:'1px solid rgba(255,255,255,0.08)',
+                  borderRadius:'30px',
+                  padding:'34px',
+                  marginBottom:'24px',
                 }}
               >
                 <div
                   className="heading-font"
                   style={{
-                    fontSize: '34px',
-                    fontWeight: '900',
-                    marginBottom: '18px',
-                    letterSpacing: '-2px',
+                    fontSize:'38px',
+                    fontWeight:'900',
+                    marginBottom:'12px',
                   }}
                 >
                   {pkg.title}
@@ -416,55 +319,79 @@ export default function DashboardPage() {
 
                 <div
                   style={{
-                    fontSize: '68px',
-                    fontWeight: '900',
-                    marginBottom: '18px',
+                    fontSize:'58px',
+                    fontWeight:'900',
+                    marginBottom:'18px',
                   }}
                 >
                   {pkg.price}
-                  <span
-                    style={{
-                      fontSize: '18px',
-                      color: '#94a3b8',
-                    }}
-                  >
-                    /mo
-                  </span>
                 </div>
 
                 <p
                   style={{
-                    color: '#94a3b8',
-                    lineHeight: '1.8',
-                    marginBottom: '32px',
-                    fontSize: '17px',
+                    color:'#94a3b8',
+                    lineHeight:'1.8',
+                    marginBottom:'24px',
+                    fontSize:'18px',
                   }}
                 >
                   {pkg.desc}
                 </p>
 
-                <button
+                <div
                   style={{
-                    width: '100%',
-                    padding: '18px',
-                    border: 'none',
-                    borderRadius: '18px',
-                    background:
-                      'linear-gradient(135deg,#7c3aed,#ec4899)',
-                    color: 'white',
-                    fontWeight: '800',
-                    fontSize: '16px',
-                    cursor: 'pointer',
-                    boxShadow:
-                      '0 10px 40px rgba(168,85,247,0.35)',
+                    background:'#09090f',
+                    borderRadius:'22px',
+                    padding:'24px',
+                    marginBottom:'24px',
+                    border:'1px solid rgba(255,255,255,0.06)',
                   }}
                 >
-                  {pkg.button}
+                  <div
+                    className="heading-font"
+                    style={{
+                      fontSize:'24px',
+                      marginBottom:'16px',
+                    }}
+                  >
+                    Installation Guide
+                  </div>
+
+                  <ol
+                    style={{
+                      color:'#cbd5e1',
+                      lineHeight:'2',
+                      paddingLeft:'20px',
+                    }}
+                  >
+                    <li>Download the extension package</li>
+                    <li>Open Chrome Extensions</li>
+                    <li>Enable Developer Mode</li>
+                    <li>Click Load Unpacked</li>
+                    <li>Select extracted extension folder</li>
+                    <li>Pin CIC extension to toolbar</li>
+                  </ol>
+                </div>
+
+                <button
+                  style={{
+                    padding:'18px 34px',
+                    borderRadius:'18px',
+                    border:'none',
+                    background:
+                      'linear-gradient(135deg,#7c3aed,#ec4899)',
+                    color:'white',
+                    fontWeight:'800',
+                    fontSize:'16px',
+                    cursor:'pointer',
+                  }}
+                >
+                  Download Extension
                 </button>
               </div>
             ))}
           </div>
-        </div>
+        )}
       </div>
     </div>
   )
