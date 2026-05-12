@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-const AUTH = ['chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp','https://chattersinnercircle.vercel.app','https://cic-app.pages.dev','http://localhost:3000'];
+const AUTH = ['chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp','https://chattersinnercircle.vercel.app','https://chattersinnercircle.vercel.app','http://localhost:3000'];
 function cors(o: string|null) { const r = o && AUTH.includes(o) ? o : AUTH[0]; return { 'Access-Control-Allow-Origin': r, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' }; }
 
 export async function OPTIONS(req: NextRequest) { return new NextResponse(null, { status: 204, headers: cors(req.headers.get('origin')) }); }

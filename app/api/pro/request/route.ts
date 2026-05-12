@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-const PLATFORM = ['chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp','https://chattersinnercircle.vercel.app','https://cic-app.pages.dev','https://chathomebase.com','https://www.chathomebase.com','https://alpha.date','https://www.alpha.date','https://onlyfans.com','https://fansly.com','https://loyalfans.com','https://fancentro.com','https://admireme.vip','https://fanvue.com','https://www.manyvids.com','https://unlockd.com','http://localhost:3000'];
+const PLATFORM = ['chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp','https://chattersinnercircle.vercel.app','https://chattersinnercircle.vercel.app','https://chathomebase.com','https://www.chathomebase.com','https://alpha.date','https://www.alpha.date','https://onlyfans.com','https://fansly.com','https://loyalfans.com','https://fancentro.com','https://admireme.vip','https://fanvue.com','https://www.manyvids.com','https://unlockd.com','http://localhost:3000'];
 function cors(o: string|null) { const r = o && PLATFORM.includes(o) ? o : PLATFORM[1]; return { 'Access-Control-Allow-Origin': r, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-User-Email' }; }
 
 const LABELS: Record<string,string> = { mpesa: 'M-Pesa', card: 'Card', paypal: 'PayPal', crypto: 'Crypto' };

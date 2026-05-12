@@ -2,7 +2,7 @@
 export const PLATFORM_ORIGINS = [
   'chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp',
   'https://chattersinnercircle.vercel.app',
-  'https://cic-app.pages.dev',
+  'https://chattersinnercircle.vercel.app',
   'https://chathomebase.com',
   'https://www.chathomebase.com',
   'https://alpha.date',
@@ -23,7 +23,7 @@ export const PLATFORM_ORIGINS = [
 export const AUTH_ORIGINS = [
   'chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp',
   'https://chattersinnercircle.vercel.app',
-  'https://cic-app.pages.dev',
+  'https://chattersinnercircle.vercel.app',
   'http://localhost:3000',
 ];
 

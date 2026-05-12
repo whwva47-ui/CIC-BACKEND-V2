@@ -958,10 +958,10 @@ export default function Dashboard() {
               <div className="win-body">
                 <div className="g2" style={{gap:20,marginBottom:20}}>
                   {[
-                    {icon:'💬',name:'CIC -- Texting Factory',ver:'v1.5.1',url:EXT_TF,
+                    {icon:'💬',name:'CIC -- Texting Factory',ver:'v1.6.2',url:EXT_TF,
                      desc:'For chathomebase.com and Texting Factory operators. Reads messages automatically, enforces character rules, types at human speed.',
                      features:['Auto-reads chat messages','75-250 character rule','Human-speed typing','Session lock security','Full plan enforcement']},
-                    {icon:'🌐',name:'General CIC',ver:'v1.5.1',url:EXT_GEN,
+                    {icon:'🌐',name:'General CIC',ver:'v1.6.2',url:EXT_GEN,
                      desc:'For Alpha.date, OnlyFans, Fansly, ChatterApply and 8 other platforms. Also works on any website -- scan screen content and generate replies anywhere.',
                      features:['Alpha.date cat 1/2/3 system','Photo compliment detection','ChatterApply.com supported','Any-website screen scanning','Re-engagement triggers']},
                   ].map(e=>(
@@ -994,7 +994,8 @@ export default function Dashboard() {
                 </div>
                 <div className="card card-gold">
                   <div style={{fontFamily:'var(--serif)',fontSize:13,color:'var(--gl)',marginBottom:8}}>Version History</div>
-                  {[['v1.5.1','Latest','Session token security, USETN IDs filtered, context invalidation handled gracefully'],
+                  {[['v1.6.2','Latest','Backend URL fixed, ChatterApply support, any-website scanning, new pricing tiers'],
+                    ['v1.5.1','Previous','Session token security, USETN IDs filtered, context invalidation handled'],
                     ['v1.5.0','Previous','Fixed scanning on all platforms, Alpha.date /chance page cold client detection'],
                     ['v1.1.0','Legacy','Original version -- email + password. Update immediately.']
                   ].map(([ver,tag,desc])=>(
