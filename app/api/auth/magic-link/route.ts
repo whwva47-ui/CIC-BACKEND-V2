@@ -16,11 +16,12 @@ export async function POST(req: NextRequest) {
   if (!email.includes('@')) return NextResponse.json({ error: 'Valid email required.' }, { status: 400, headers: OPEN });
 
   const anon = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-  const { error } = await anon.auth.signInWithOtp({ email, options: { emailRedirectTo: `${SITE}/landing`, shouldCreateUser: true } });
+  const { error } = await anon.auth.signInWithOtp({ email, options: { emailRedirectTo: `${SITE}/auth/confirm`, shouldCreateUser: true } });
 
   if (error) {
+    console.error('[magic-link] Supabase error:', error.status, error.message);
     if (error.status === 429) return NextResponse.json({ error: 'Too many requests. Wait a minute.' }, { status: 429, headers: OPEN });
-    return NextResponse.json({ error: 'Could not send magic link.' }, { status: 500, headers: OPEN });
+    return NextResponse.json({ error: error.message || 'Could not send magic link.', code: error.status }, { status: 500, headers: OPEN });
   }
 
   if (referralCode) {
