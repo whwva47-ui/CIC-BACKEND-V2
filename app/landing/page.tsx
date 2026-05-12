@@ -332,9 +332,9 @@ export default function LandingPage() {
             </div>
             <div className="g3">
               {[
-                { name:'Free Trial', price:'Free', period:'7 days', color:'var(--ok)', badge:'NOW', features:['Full Pro days 1-3','20 replies/day days 4-7','Both extensions','All platforms','No credit card'] },
-                { name:'Basic', price:'$8', period:'per month', color:'#60a5fa', badge:'', features:['50 replies per day','All platforms','Standard AI','Both extensions','Email support'] },
-                { name:'Pro', price:'$15', period:'per month', color:'var(--pl)', badge:'BEST', features:['Unlimited replies','Full explicit','Premium AI','Priority support','Referrals'] },
+                { name:'Free Trial', price:'Free', period:'7 days', color:'var(--ok)', badge:'NOW', features:['Day 1-3: 50 premium replies/day','Day 4-5: 30 basic replies/day','Day 6: 20 basic replies/day','Day 7: 10 basic replies/day','No credit card needed'] },
+                { name:'Basic', price:'$8', period:'per month', color:'#60a5fa', badge:'', features:['Unlimited generic replies','All 10+ platforms','Standard AI quality','Both extensions included','No explicit content'] },
+                { name:'Pro', price:'$15', period:'per month', color:'var(--pl)', badge:'BEST', features:['Unlimited premium replies','Full explicit and erotic content','Best-in-class AI responses','Priority support','Referral rewards'] },
               ].map(p => (
                 <div key={p.name} className="card" style={{ position:'relative', border:p.name==='Pro'?'1px solid rgba(168,85,247,0.4)':undefined }}>
                   {p.badge && <div style={{ position:'absolute', top:10, right:10, background:'linear-gradient(135deg,var(--p),var(--g))', padding:'2px 8px', borderRadius:20, fontSize:9, fontWeight:700, color:'#fff' }}>{p.badge}</div>}
@@ -359,7 +359,7 @@ export default function LandingPage() {
             <p style={{ marginBottom:8 }}>Chatter's Inner Circle -- AI Reply Assistant -- Available Worldwide</p>
             <p style={{ marginBottom:14 }}>
               Support: <a href="mailto:whwva47@gmail.com" style={{ color:'var(--pl)', textDecoration:'none' }}>whwva47@gmail.com</a>
-              {' '} -- WhatsApp: +254 113 178 973
+              {' '}
             </p>
             <div style={{ display:'flex', gap:16, justifyContent:'center', flexWrap:'wrap' as const }}>
               <a href="/dashboard" style={{ color:'var(--t3)', textDecoration:'none' }}>Dashboard</a>

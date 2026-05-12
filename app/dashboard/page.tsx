@@ -194,16 +194,16 @@ select.inp{cursor:pointer;appearance:none;background-image:url("data:image/svg+x
 type Section = 'demo' | 'chat-agent' | 'reactivation' | 'typing' | 'photo' | 'alphadate-guide' | 'tf-guide' | 'qa' | 'extensions' | 'install' | 'analytics' | 'billing'
 
 const DEMO_REPLIES = [
-  { tone:'Warm', text:"Something about the way you said that made me stop. I feel like there is a whole story behind those words -- what is really going on with you today?" },
-  { tone:'Playful', text:"You say things like that as if you don't already know exactly what effect they have. Tell me more about this dangerous mind of yours." },
-  { tone:'Mysterious', text:"There is something in how you write that I can't quite place yet. I want to figure it out -- what is the one thing people always get wrong about you?" },
-  { tone:'Direct', text:"I was not expecting to find someone actually worth talking to today. Prove me right -- what is one thing that would surprise me about you?" },
+  { tone:'Warm', text:"Careful flirting with me this confidently -- most people work up to it slowly. There is something refreshing about someone who just says what they mean. What are you like when you are not trying to impress anyone?" },
+  { tone:'Playful', text:"Is that how you open every conversation, or did you save that one especially for me? Either way it worked, and I am genuinely curious what comes next from you." },
+  { tone:'Mysterious', text:"There is a version of tonight I had already planned in my head, and then you said that and it changed completely. Tell me something about yourself that would actually surprise me." },
+  { tone:'Deep', text:"You know what I find rare? Someone who can be playful and mean it at the same time. Most people are one or the other. What is it about you that makes you so comfortable being both?" },
 ]
 
 const REACTIVATION_MSGS = [
-  { tone:'Warm re-engage', text:"SOMETHING ABOUT YOUR SILENCE GOT MY ATTENTION and I have been wondering what is keeping you busy. Come back and tell me everything." },
-  { tone:'Curious pull-back', text:"YOU WENT QUIET ON ME and I am choosing to take that as a challenge rather than a goodbye. What do I need to say to get you talking again?" },
-  { tone:'Playful', text:"I WAS THINKING ABOUT YOU EARLIER and I couldn't figure out why -- then I remembered our last conversation. Are you as interesting as I remember?" },
+  { tone:'Warm re-engage', text:"SOMETHING MADE ME THINK OF YOU TODAY -- not in a general way, in a specific one. The kind that makes you wonder what someone is actually up to. What has your week looked like?" },
+  { tone:'Curious pull-back', text:"MOST PEOPLE WHO GO QUIET EVENTUALLY COME BACK and I have a feeling you are one of those people. I am not asking why you disappeared -- I am asking what would make you stay this time." },
+  { tone:'Playful challenge', text:"I GAVE YOU A WEEK AND YOU STILL HAVE NOT CONVINCED ME you are as interesting as I thought. Last chance -- say something that proves me wrong." },
 ]
 
 const QA = [
@@ -341,9 +341,9 @@ export default function Dashboard() {
     setPhotoLoading(true)
     await sleep(1800)
     setPhotoResults([
-      "SOMETHING IN YOUR PRESENCE STOPPED ME -- there is a quiet confidence in that photo that does not announce itself, just exists. What is the story behind the person in that picture?",
-      "YOU CARRY SOMETHING RARE IN THAT PHOTO -- the kind of warmth that makes a stranger want to know what you are actually like when nobody is watching. What would surprise me most about you?",
-      "THAT PHOTO TELLS ME MORE THAN YOU THINK -- there is depth there, something behind the eyes that I can't quite figure out yet. What is the one thing people always get wrong about you?",
+      "There is something in how you carry yourself in that photo -- it is not posed, it is just you, and that is actually the rarest thing. Most people forget to be themselves the moment a camera appears. What were you thinking when this was taken?",
+      "I have looked at this photo twice now and both times I noticed something different. The first time it was the confidence. The second time it was something quieter behind it. What is the version of you that most people never get to see?",
+      "You have one of those faces that tells a story without saying anything. There is warmth there but also something private, like you have decided what you share and what you keep. What would actually surprise me about you?",
     ])
     setPhotoLoading(false)
   }
@@ -1096,9 +1096,9 @@ export default function Dashboard() {
               <div className="win-body">
                 <div className="g3" style={{marginBottom:20}}>
                   {[
-                    {name:'Free Trial',price:'Free',period:'7 days',color:'var(--ok)',badge:'LIMITED',features:['Full Pro access days 1-3','20 replies/day days 4-7','Both extensions','All platforms','No credit card']},
-                    {name:'Basic',price:'$8',period:'/ month',color:'#60a5fa',badge:'',features:['50 replies per day','All platforms','Standard AI','Both extensions','Email support']},
-                    {name:'Pro',price:'$15',period:'/ month',color:'var(--pl)',badge:'BEST',features:['Unlimited replies','Full explicit content','Premium AI quality','Priority support','Referral rewards']},
+                    {name:'Free Trial',price:'Free',period:'7 days',color:'var(--ok)',badge:'LIMITED',features:['Day 1-3: 50 premium replies/day','Day 4-5: 30 basic replies/day','Day 6: 20 basic replies/day','Day 7: 10 basic replies/day','No credit card needed']},
+                    {name:'Basic',price:'$8',period:'/ month',color:'#60a5fa',badge:'',features:['Unlimited generic replies','All 10+ platforms','Standard AI quality','Both extensions included','No explicit content']},
+                    {name:'Pro',price:'$15',period:'/ month',color:'var(--pl)',badge:'BEST',features:['Unlimited premium replies','Full explicit and erotic content','Best-in-class AI responses','Priority support','Referral rewards']},
                   ].map(p=>(
                     <div key={p.name} className="card" style={{position:'relative',border:p.name==='Pro'?'1px solid rgba(168,85,247,0.35)':undefined,boxShadow:p.name==='Pro'?'0 0 40px rgba(124,58,237,0.1)':undefined}}>
                       {p.badge&&<div style={{position:'absolute',top:12,right:12,background:'linear-gradient(135deg,var(--p),var(--g))',padding:'2px 8px',borderRadius:20,fontSize:9,fontWeight:700,color:'#fff'}}>{p.badge}</div>}
@@ -1119,7 +1119,7 @@ export default function Dashboard() {
                 <div className="card card-gold" style={{textAlign:'center'}}>
                   <div style={{fontFamily:'var(--serif)',fontSize:14,color:'var(--gl)',marginBottom:10}}>How to Pay</div>
                   <div style={{fontSize:13,color:'var(--t3)',lineHeight:1.7,marginBottom:12}}>Click Upgrade inside the extension. Choose your payment method. Admin contacts you within minutes with payment details. Available in every country -- M-Pesa, Visa, Mastercard, PayPal, USDT, BTC, ETH, bank transfer.</div>
-                  <div style={{fontSize:12,color:'var(--t3)'}}>Support: <a href="mailto:whwva47@gmail.com" style={{color:'var(--pl)',textDecoration:'none'}}>whwva47@gmail.com</a> - WhatsApp: +254 113 178 973</div>
+                  <div style={{fontSize:12,color:'var(--t3)'}}>Support: <a href="mailto:whwva47@gmail.com" style={{color:'var(--pl)',textDecoration:'none'}}>whwva47@gmail.com</a></div>
                 </div>
               </div>
             </div>
