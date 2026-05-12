@@ -1,615 +1,601 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useRef } from 'react'
 
-const SITE = process.env.NEXT_PUBLIC_SITE_URL || 'https://chattersinnercircle.vercel.app'
+const SITE    = process.env.NEXT_PUBLIC_SITE_URL || 'https://chattersinnercircle.vercel.app'
+const EXT_TF  = 'https://chromewebstore.google.com/detail/cic-texting-factory/dkgpheiimhedhdfandcgeogmbfmmiobp'
+const EXT_GEN = 'https://chromewebstore.google.com/detail/cic-general-platforms/dkgpheiimhedhdfandcgeogmbfmmiobp'
 
-// Chrome Web Store extension IDs
-const EXT_TF      = 'https://chromewebstore.google.com/detail/cic-texting-factory/dkgpheiimhedhdfandcgeogmbfmmiobp'
-const EXT_GENERAL = 'https://chromewebstore.google.com/detail/cic-general-platforms/dkgpheiimhedhdfandcgeogmbfmmiobp'
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap');
+
+  :root {
+    --bg:  #06060E; --bg2: #0C0C1A; --bg3: #111128; --card: #0E0E22;
+    --bd:  rgba(139,92,246,0.15); --bd2: rgba(212,163,0,0.2);
+    --p:   #7C3AED; --pl: #A855F7; --pll: #C4B5FD;
+    --g:   #D4A300; --gl: #F5D98A; --gll: #FEF3C7;
+    --t1:  #EDE9FE; --t2: #A78BFA; --t3: #6D6A8A;
+    --ok:  #34D399; --err: #F87171;
+    --serif: 'Cinzel', serif; --sans: 'DM Sans', sans-serif;
+    --r: 10px; --rl: 16px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  .cic-root {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--t1);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+  }
+
+  /* Grain */
+  .cic-root::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 0; opacity: 0.35;
+  }
+
+  .orb {
+    position: fixed; border-radius: 50%; pointer-events: none;
+    z-index: 0; filter: blur(80px); opacity: 0.1;
+  }
+  .orb1 { width: 520px; height: 520px; background: var(--p); top: -200px; right: -150px; }
+  .orb2 { width: 420px; height: 420px; background: var(--g); bottom: -150px; left: -100px; }
+
+  .z1 { position: relative; z-index: 1; }
+
+  /* Nav */
+  .nav {
+    padding: 14px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--bd);
+    position: sticky; top: 0; background: rgba(6,6,14,0.92);
+    backdrop-filter: blur(12px); z-index: 50;
+  }
+  .brand { font-family: var(--serif); font-size: 15px; font-weight: 700; letter-spacing: 0.05em; background: linear-gradient(135deg, var(--pl), var(--gl)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .nav-sub { font-size: 10px; color: var(--t3); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 1px; }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 22px; border-radius: var(--r); font-family: var(--sans); font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s ease; }
+  .btn-primary { background: linear-gradient(135deg, var(--p), var(--pl)); color: #fff; box-shadow: 0 2px 20px rgba(124,58,237,0.35); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 28px rgba(124,58,237,0.5); }
+  .btn-gold { background: linear-gradient(135deg, var(--g), var(--gl)); color: #0a0a1a; box-shadow: 0 2px 20px rgba(212,163,0,0.3); }
+  .btn-gold:hover { transform: translateY(-1px); box-shadow: 0 4px 28px rgba(212,163,0,0.45); }
+  .btn-ghost { background: rgba(124,58,237,0.1); color: var(--pll); border: 1px solid var(--bd); }
+  .btn-ghost:hover { background: rgba(124,58,237,0.2); }
+  .btn-outline { background: transparent; color: var(--pl); border: 1px solid rgba(168,85,247,0.4); }
+  .btn-outline:hover { border-color: var(--pl); background: rgba(124,58,237,0.08); }
+  .btn-lg { padding: 14px 32px; font-size: 15px; }
+  .btn-sm { padding: 7px 14px; font-size: 12px; }
+  .btn-full { width: 100%; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  /* Cards */
+  .card { background: var(--card); border: 1px solid var(--bd); border-radius: var(--rl); padding: 22px; }
+  .card-gold { border-color: var(--bd2); }
+  .card-glow { border-color: rgba(168,85,247,0.3); box-shadow: 0 0 30px rgba(124,58,237,0.1); }
+
+  /* Inputs */
+  .label { display: block; font-size: 10px; font-weight: 700; color: var(--t3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .input { width: 100%; padding: 12px 14px; background: var(--bg3); border: 1px solid var(--bd); border-radius: var(--r); color: var(--t1); font-size: 14px; font-family: var(--sans); outline: none; transition: border-color 0.2s; }
+  .input:focus { border-color: var(--pl); }
+  .input::placeholder { color: var(--t3); }
+
+  /* Hero */
+  .hero { max-width: 720px; margin: 0 auto; padding: 80px 24px 48px; text-align: center; }
+  .hero-badge { display: inline-block; padding: 5px 16px; background: rgba(124,58,237,0.12); border: 1px solid rgba(124,58,237,0.3); border-radius: 20px; font-size: 11px; color: var(--pl); margin-bottom: 20px; letter-spacing: 0.05em; }
+  .hero-title { font-family: var(--serif); font-size: clamp(28px,5vw,52px); font-weight: 700; line-height: 1.15; margin-bottom: 16px; letter-spacing: 0.02em; }
+  .hero-grad { background: linear-gradient(135deg, var(--pl), var(--gl)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; display: block; }
+  .hero-sub { font-size: 16px; color: var(--t3); line-height: 1.7; max-width: 520px; margin: 0 auto 32px; }
+
+  /* Section */
+  .section { max-width: 760px; margin: 0 auto; padding: 0 24px 64px; }
+  .section-title { font-family: var(--serif); font-size: 22px; font-weight: 600; text-align: center; margin-bottom: 8px; }
+  .section-sub { font-size: 13px; color: var(--t3); text-align: center; margin-bottom: 24px; }
+
+  /* Grid */
+  .g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .g2, .g3 { grid-template-columns: 1fr; } }
+
+  /* Pricing */
+  .plan-best { border-color: rgba(168,85,247,0.4) !important; box-shadow: 0 0 40px rgba(124,58,237,0.12); }
+  .plan-badge { position: absolute; top: 12px; right: 12px; background: linear-gradient(135deg, var(--p), var(--g)); padding: 3px 10px; border-radius: 20px; font-size: 9px; font-weight: 700; color: #fff; }
+
+  /* Photo drop */
+  .drop-zone { border: 2px dashed var(--bd2); border-radius: var(--rl); padding: 40px; text-align: center; cursor: pointer; transition: all 0.2s; background: rgba(212,163,0,0.03); }
+  .drop-zone:hover, .drop-zone.over { border-color: var(--g); background: rgba(212,163,0,0.07); }
+
+  /* Tabs */
+  .tab-btn { padding: 7px 16px; border-radius: 20px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid var(--bd); background: transparent; color: var(--t3); font-family: var(--sans); transition: all 0.2s; }
+  .tab-btn:hover { color: var(--t1); border-color: var(--pl); }
+  .tab-btn.active { background: rgba(124,58,237,0.15); color: var(--pll); border-color: rgba(124,58,237,0.4); }
+
+  /* Guide */
+  .ex-card { background: var(--bg3); border-radius: var(--r); padding: 12px 14px; margin-bottom: 8px; }
+  .ex-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 5px; }
+  .ex-text { font-size: 13px; font-style: italic; line-height: 1.6; }
+
+  /* Spinner */
+  .spin { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.25); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg2); }
+  ::-webkit-scrollbar-thumb { background: rgba(124,58,237,0.4); border-radius: 2px; }
+`
+
+type Step = 'home' | 'signup' | 'sent' | 'photo-demo' | 'alphadate-guide' | 'install-guide'
 
 export default function LandingPage() {
-  const [step, setStep]       = useState('home')
-  const [email, setEmail]     = useState('')
-  const [referral, setReferral] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [msg, setMsg]         = useState('')
-  const [guideTab, setGuideTab] = useState('cat1')
-  const [tokenLoading, setTokenLoading] = useState(false)
+  const [step, setStep]               = useState<Step>('home')
+  const [email, setEmail]             = useState('')
+  const [referral, setReferral]       = useState('')
+  const [loading, setLoading]         = useState(false)
+  const [msg, setMsg]                 = useState('')
   const [photoPreview, setPhotoPreview] = useState<string|null>(null)
-  const [photoCompliments, setPhotoCompliments] = useState<string[]>([])
   const [photoLoading, setPhotoLoading] = useState(false)
+  const [photoResults, setPhotoResults] = useState<string[]>([])
+  const [guideTab, setGuideTab]       = useState('cat1')
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  // -- Item 3: Webapp token handler ---------------------------------
-  // When operator logs in via extension popup, they land here with ?token=
-  // We validate it and redirect to the app with their session set
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const token  = params.get('token')
-    if (!token) return
 
-    // Remove token from URL immediately
-    window.history.replaceState({}, document.title, window.location.pathname)
-    setTokenLoading(true)
-
-    fetch(`${SITE}/api/auth/verify-token`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token })
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.user) {
-        // Save session and redirect to the webapp
-        localStorage.setItem('cic_user', JSON.stringify(data.user))
-        window.location.href = 'https://cic-app.pages.dev'
-      } else {
-        setTokenLoading(false)
-        setMsg(data.error || 'Login link expired. Please sign in again from the extension.')
-        setStep('signup')
-      }
-    })
-    .catch(() => {
-      setTokenLoading(false)
-    })
-  }, [])
 
   async function handleSignup() {
-    if (!email || !email.includes('@')) { setMsg('Please enter a valid email address.'); return }
-    setLoading(true)
-    setMsg('')
+    if (!email.includes('@')) { setMsg('Enter a valid email address.'); return }
+    setLoading(true); setMsg('')
     try {
       const r = await fetch('/api/auth/magic-link', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, referralCode: referral || undefined })
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, referralCode: referral || undefined })
       })
       const d = await r.json()
       if (d.success) setStep('sent')
-      else setMsg(d.error || 'Something went wrong')
-    } catch(e) {
-      setMsg('Connection error. Please try again.')
-    }
+      else setMsg(d.error || 'Something went wrong.')
+    } catch { setMsg('Connection error. Please try again.') }
     setLoading(false)
   }
 
-  // -- Token loading screen ------------------------------------------
-  if (tokenLoading) return (
-    <div style={{minHeight:'100vh',background:'#080810',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'sans-serif'}}>
-      <div style={{textAlign:'center'}}>
-        <div style={{width:'40px',height:'40px',border:'3px solid rgba(168,85,247,0.3)',borderTopColor:'#a855f7',borderRadius:'50%',animation:'spin 0.8s linear infinite',margin:'0 auto 16px'}}/>
-        <div style={{color:'#a855f7',fontSize:'14px'}}>Signing you in...</div>
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      </div>
-    </div>
-  )
+  function handlePhoto(file: File) {
+    const reader = new FileReader()
+    reader.onload = e => { setPhotoPreview(e.target?.result as string); setPhotoResults([]); }
+    reader.readAsDataURL(file)
+  }
 
-  // -- Email sent screen ---------------------------------------------
+  async function generateCompliments() {
+    setPhotoLoading(true)
+    await new Promise(r => setTimeout(r, 1800))
+    setPhotoResults([
+      'SOMETHING IN YOUR PRESENCE STOPPED ME -- there is a quiet confidence in that photo that does not announce itself, just exists. What is the story behind the person in that picture?',
+      'YOU CARRY SOMETHING RARE IN THAT PHOTO -- the kind of warmth that makes a stranger want to know what you are actually like when nobody is watching. What would surprise me most about you?',
+      'THAT PHOTO TELLS ME MORE THAN YOU THINK -- there is depth there, something behind the eyes that I cannot quite figure out yet. What is the one thing people always get wrong about you?',
+    ])
+    setPhotoLoading(false)
+  }
+
+  // Screens
+
+
   if (step === 'sent') return (
-    <div style={{minHeight:'100vh',background:'#080810',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'sans-serif'}}>
-      <div style={{textAlign:'center',padding:'40px',maxWidth:'440px'}}>
-        <div style={{fontSize:'56px',marginBottom:'16px'}}> </div>
-        <h2 style={{color:'#a855f7',marginBottom:'12px'}}>Check Your Email</h2>
-        <p style={{color:'#71767b',lineHeight:'1.6'}}>We sent a magic link to <b style={{color:'#e2e8f0'}}>{email}</b>. Click it to sign in. Expires in 1 hour.</p>
-        <button onClick={()=>setStep('home')} style={{marginTop:'24px',padding:'10px 24px',background:'transparent',border:'1px solid #1e1e32',borderRadius:'8px',color:'#71767b',cursor:'pointer',fontFamily:'sans-serif'}}>  Back</button>
-      </div>
-    </div>
-  )
-
-  // -- Signup screen -------------------------------------------------
-  if (step === 'signup') return (
-    <div style={{minHeight:'100vh',background:'#080810',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'sans-serif'}}>
-      <div style={{width:'100%',maxWidth:'400px',padding:'32px 24px'}}>
-        <div style={{textAlign:'center',marginBottom:'28px'}}>
-          <div style={{width:'52px',height:'52px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',borderRadius:'14px',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:'24px',marginBottom:'12px'}}> </div>
-          <h2 style={{color:'#a855f7',margin:'0 0 4px',fontSize:'20px'}}>Create Your Account</h2>
-          <p style={{color:'#71767b',margin:0,fontSize:'13px'}}>  Limited promotion -- 7 days free. No credit card. Use it while it lasts.</p>
-        </div>
-
-        {[
-          {label:'Email Address',type:'email',val:email,set:setEmail,ph:'you@example.com',note:''},
-          {label:'Referral Code (optional)',type:'text',val:referral,set:setReferral,ph:'Enter referral code',note:''},
-        ].map(f => (
-          <div key={f.label} style={{marginBottom:'14px'}}>
-            <label style={{display:'block',fontSize:'10px',color:'#71767b',marginBottom:'5px',textTransform:'uppercase' as any,letterSpacing:'0.5px'}}>{f.label}</label>
-            <input type={f.type} value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph}
-              style={{width:'100%',background:'#0f0f1a',border:'1px solid #1e1e32',borderRadius:'7px',padding:'10px 12px',color:'#e2e8f0',fontSize:'13px',boxSizing:'border-box' as any,outline:'none',fontFamily:'sans-serif'}} />
-            {f.note && <div style={{fontSize:'10px',color:'#444460',marginTop:'3px'}}>{f.note}</div>}
-          </div>
-        ))}
-
-        {msg && <div style={{color:'#f43f5e',fontSize:'12px',marginBottom:'12px'}}>{msg}</div>}
-
-        <button onClick={handleSignup} disabled={loading}
-          style={{width:'100%',padding:'12px',background:'linear-gradient(135deg,#7c3aed,#9333ea,#d4a300)',border:'none',borderRadius:'8px',color:'#fff',fontSize:'14px',fontWeight:'600',cursor:'pointer',fontFamily:'sans-serif',opacity:loading?0.7:1}}>
-          {loading ? 'Sending...' : 'Send Magic Link  '}
-        </button>
-
-        <p style={{textAlign:'center',fontSize:'11px',color:'#444460',marginTop:'14px'}}>This free trial is a limited-time promotion. Use it before it changes.</p>
-        <button onClick={()=>setStep('home')} style={{display:'block',margin:'8px auto 0',background:'none',border:'none',color:'#444460',cursor:'pointer',fontSize:'12px',fontFamily:'sans-serif'}}>  Back to home</button>
-      </div>
-    </div>
-  )
-
-  // -- Alpha.date guide screen ---------------------------------------
-  if (step === 'alphadate-guide') return (
-    <div style={{minHeight:'100vh',background:'#080810',color:'#e2e8f0',fontFamily:'sans-serif'}}>
-      <div style={{padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid #1e1e32',position:'sticky' as any,top:0,background:'#080810',zIndex:10}}>
-        <div style={{fontWeight:'700',fontSize:'13px',background:'linear-gradient(135deg,#a855f7,#fbbf24)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>Alpha.date Operator Guide</div>
-        <button onClick={()=>setStep('home')} style={{padding:'7px 16px',background:'transparent',border:'1px solid #1e1e32',borderRadius:'6px',color:'#71767b',cursor:'pointer',fontSize:'12px',fontFamily:'sans-serif'}}>  Back</button>
-      </div>
-
-      <div style={{maxWidth:'720px',margin:'0 auto',padding:'32px 24px'}}>
-
-        {/* Hook Rules */}
-        <div style={{background:'#0f0f1a',border:'1px solid rgba(212,163,0,0.25)',borderRadius:'12px',padding:'20px',marginBottom:'20px'}}>
-          <h3 style={{color:'#fbbf24',marginBottom:'12px',fontSize:'15px'}}>  Hook Rules -- Apply to Every Message and Letter</h3>
-          <div style={{background:'rgba(212,163,0,0.06)',border:'1px solid rgba(212,163,0,0.2)',borderRadius:'8px',padding:'14px',marginBottom:'12px'}}>
-            <div style={{fontSize:'11px',fontWeight:'700',color:'#fbbf24',textTransform:'uppercase' as any,letterSpacing:'0.05em',marginBottom:'8px'}}>The Golden Rule</div>
-            <p style={{fontSize:'13px',color:'#e2e8f0',lineHeight:'1.7',margin:0}}>Every message and every letter must begin with a strong HOOK written in <b>ALL CAPITAL LETTERS</b>. 4-7 words. No punctuation at the end. Never repeat the same hook.</p>
-          </div>
-          <div style={{display:'grid',gap:'10px'}}>
-            {[
-              {title:'Message Hook', color:'#a855f7', rule:'4-7 words ALL CAPS, no ending punctuation, followed by body + one question.', ex:'SOMETHING ABOUT YOU SURPRISED ME and I have been trying to figure out what it is ever since. What do most people get wrong about you?'},
-              {title:'Letter Hook', color:'#fbbf24', rule:'Same but the hook IS the first sentence of a single paragraph. Max 300 characters total. No emojis.', ex:'YOU HAVE A RARE KIND OF ENERGY and I noticed it immediately -- the quiet confidence that does not need to announce itself. What is the quality you value most in someone you want to keep in your life?'},
-            ].map(item => (
-              <div key={item.title} style={{background:'#080810',border:'1px solid #1e1e32',borderRadius:'8px',padding:'14px'}}>
-                <div style={{fontSize:'11px',fontWeight:'700',color:item.color,textTransform:'uppercase' as any,letterSpacing:'0.05em',marginBottom:'6px'}}>{item.title}</div>
-                <p style={{fontSize:'12px',color:'#71767b',lineHeight:'1.6',marginBottom:'8px'}}>{item.rule}</p>
-                <div style={{background:`rgba(${item.color==='#a855f7'?'168,85,247':'212,163,0'},0.06)`,borderRadius:'6px',padding:'9px',fontSize:'12px',color:item.color==='#a855f7'?'#c4b5fd':'#fcd34d',fontStyle:'italic' as any,lineHeight:'1.5'}}>{item.ex}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Category tabs */}
-        <div style={{display:'flex',gap:'8px',marginBottom:'16px',flexWrap:'wrap' as any}}>
-          {[
-            {id:'cat1',label:'Category 1 -- First Outreach'},
-            {id:'cat2',label:'Category 2 -- Active Chats'},
-            {id:'cat3',label:'Category 3 -- Bulk Sender'},
-            {id:'rules',label:'Absolute Rules'},
-          ].map(t => (
-            <button key={t.id} onClick={()=>setGuideTab(t.id)}
-              style={{padding:'7px 14px',borderRadius:'20px',border:`1px solid ${guideTab===t.id?'#a855f7':'#1e1e32'}`,background:guideTab===t.id?'rgba(168,85,247,0.15)':'transparent',color:guideTab===t.id?'#a855f7':'#71767b',fontSize:'11px',fontWeight:'600',cursor:'pointer',fontFamily:'sans-serif'}}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {guideTab === 'cat1' && (
-          <div style={{background:'#0f0f1a',border:'1px solid #1e1e32',borderRadius:'12px',padding:'20px'}}>
-            <div style={{display:'inline-block',background:'rgba(168,85,247,0.15)',border:'1px solid rgba(168,85,247,0.3)',borderRadius:'8px',padding:'5px 12px',fontSize:'11px',fontWeight:'700',color:'#a855f7',marginBottom:'14px'}}>CATEGORY 1</div>
-            <h3 style={{fontSize:'14px',fontWeight:'700',marginBottom:'10px'}}>First Outreach -- /chance page, winks, likes, letters</h3>
-            <p style={{fontSize:'13px',color:'#71767b',lineHeight:'1.7',marginBottom:'16px'}}>Use when opening a conversation for the first time -- responding to a wink, like, or profile view, or writing a fresh message or letter.</p>
-            {[
-              {signal:'  He sent a wink',ex:'DJ, THAT WINK WAS JUST THE BEGINNING and I have a feeling you already know what comes next. What made you stop on my profile?'},
-              {signal:'  He liked your profile',ex:'Robert, MOST PEOPLE SCROLL PAST WITHOUT STOPPING and I noticed you did not. What caught your attention?'},
-              {signal:'  He viewed your profile',ex:'David, THERE IS SOMETHING RARE ABOUT TIMING and I think we might have found it. What are you actually looking for on here?'},
-              {signal:'  Writing a letter',ex:'YOU HAVE A PRESENCE THAT STAYS WITH YOU and I mean that in the rarest way -- the kind that lingers hours after you first noticed it. What has shaped you the most?'},
-            ].map(s => (
-              <div key={s.signal} style={{background:'#080810',border:'1px solid #1e1e32',borderRadius:'8px',padding:'12px',marginBottom:'10px'}}>
-                <div style={{fontSize:'11px',fontWeight:'700',color:'#a855f7',marginBottom:'6px'}}>{s.signal}</div>
-                <div style={{fontSize:'12px',color:'#c4b5fd',fontStyle:'italic' as any,lineHeight:'1.5'}}>{s.ex}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {guideTab === 'cat2' && (
-          <div style={{background:'#0f0f1a',border:'1px solid #1e1e32',borderRadius:'12px',padding:'20px'}}>
-            <div style={{display:'inline-block',background:'rgba(34,197,94,0.12)',border:'1px solid rgba(34,197,94,0.25)',borderRadius:'8px',padding:'5px 12px',fontSize:'11px',fontWeight:'700',color:'#22c55e',marginBottom:'14px'}}>CATEGORY 2</div>
-            <h3 style={{fontSize:'14px',fontWeight:'700',marginBottom:'10px'}}>Replying to Active or Inactive Chats</h3>
-            <p style={{fontSize:'13px',color:'#71767b',lineHeight:'1.7',marginBottom:'16px'}}><b style={{color:'#e2e8f0'}}>ONE SENTENCE ONLY. 15-25 words maximum. No emojis.</b> Match his tone exactly.</p>
-            {[
-              {tone:'  Romantic',ex:'There is something about the way you said that which makes it genuinely hard to think about anything else right now.'},
-              {tone:'  Playful',ex:'You say that like you have not already thought about exactly what happens next, which I am fairly certain you have.'},
-              {tone:'  Serious',ex:'That took courage to say and I want you to know I am genuinely glad you said it to me.'},
-              {tone:'  Went silent days ago',ex:'Life has a way of getting loud sometimes and I hope yours has been the good kind of busy since we last spoke.'},
-            ].map(s => (
-              <div key={s.tone} style={{background:'#080810',border:'1px solid #1e1e32',borderRadius:'8px',padding:'12px',marginBottom:'10px'}}>
-                <div style={{fontSize:'11px',fontWeight:'700',color:'#22c55e',marginBottom:'6px'}}>{s.tone}</div>
-                <div style={{fontSize:'12px',color:'#86efac',fontStyle:'italic' as any,lineHeight:'1.5'}}>{s.ex}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {guideTab === 'cat3' && (
-          <div style={{background:'#0f0f1a',border:'1px solid #1e1e32',borderRadius:'12px',padding:'20px'}}>
-            <div style={{display:'inline-block',background:'rgba(251,191,36,0.12)',border:'1px solid rgba(251,191,36,0.25)',borderRadius:'8px',padding:'5px 12px',fontSize:'11px',fontWeight:'700',color:'#fbbf24',marginBottom:'14px'}}>CATEGORY 3</div>
-            <h3 style={{fontSize:'14px',fontWeight:'700',marginBottom:'10px'}}>Sender Setup -- Bulk Content with Emojis</h3>
-            <p style={{fontSize:'13px',color:'#71767b',lineHeight:'1.7',marginBottom:'8px'}}>Under 20 words. ~40% start with ALL CAPS hook. <b style={{color:'#fbbf24'}}>Emojis allowed and encouraged.</b> Vary topics widely -- unusual questions, hypotheticals, travel, childhood, philosophy.</p>
-            {[
-              '  THE WORLD SHRANK WHEN YOU STARTED TRAVELLING -- what was the first place that genuinely changed how you think?',
-              '  If you could only keep one morning habit for the rest of your life, what would it be?  ',
-              '  LATE NIGHT THOUGHTS HIT DIFFERENTLY -- what is the last thing you thought about before falling asleep?  ',
-            ].map((ex,i) => (
-              <div key={i} style={{background:'rgba(251,191,36,0.06)',borderRadius:'6px',padding:'9px 12px',marginBottom:'8px',fontSize:'12px',color:'#fcd34d',fontStyle:'italic' as any,lineHeight:'1.5'}}>{ex}</div>
-            ))}
-          </div>
-        )}
-
-        {guideTab === 'rules' && (
-          <div style={{background:'rgba(244,63,94,0.06)',border:'1px solid rgba(244,63,94,0.2)',borderRadius:'12px',padding:'20px'}}>
-            <h3 style={{color:'#f43f5e',fontSize:'14px',marginBottom:'14px'}}>  Absolute Rules -- All Categories</h3>
-            {[
-              'Never repeat the same message or letter. Not in the same shift. Not ever.',
-              'Never reuse the same opening hook. Every conversation gets a fresh, original hook.',
-              'Never mention AI. Not directly, not indirectly, not as a joke.',
-              'No pressure, no desperation in Category 1 or Category 3 letters.',
-              'Always proofread before sending. The AI gives a starting point -- you make the final call.',
-              'Never use generic AI-sounding phrases like "I couldn\'t help but notice" or "based on your profile".',
-              'No emojis in Category 1 or Category 2. Emojis only in Category 3.',
-            ].map((rule,i) => (
-              <div key={i} style={{display:'flex',gap:'10px',padding:'8px 0',borderBottom:'0.5px solid rgba(244,63,94,0.1)',alignItems:'flex-start'}}>
-                <span style={{color:'#f43f5e',flexShrink:0,marginTop:'1px'}}> </span>
-                <span style={{fontSize:'13px',color:'#e2e8f0',lineHeight:'1.6'}}>{rule}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div style={{textAlign:'center',marginTop:'24px',padding:'16px',background:'#0f0f1a',border:'1px solid #1e1e32',borderRadius:'10px'}}>
-          <p style={{fontSize:'13px',color:'#71767b',margin:0}}>Questions about a specific scenario? WhatsApp <b style={{color:'#e2e8f0'}}>+254 113 178 973</b></p>
-        </div>
-      </div>
-    </div>
-  )
-
-  // -- Photo demo screen --------------------------------------------
-  if (step === 'photo-demo') return (
-    <div style={{minHeight:'100vh',background:'#080810',color:'#e2e8f0',fontFamily:'sans-serif'}}>
-      <div style={{padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid #1e1e32',position:'sticky' as any,top:0,background:'#080810',zIndex:10}}>
-        <div style={{fontWeight:'700',fontSize:'13px',background:'linear-gradient(135deg,#a855f7,#fbbf24)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>  Photo Compliment Demo</div>
-        <button onClick={()=>{setStep('home');setPhotoPreview(null);setPhotoCompliments([])}} style={{padding:'7px 16px',background:'transparent',border:'1px solid #1e1e32',borderRadius:'6px',color:'#71767b',cursor:'pointer',fontSize:'12px',fontFamily:'sans-serif'}}>  Back</button>
-      </div>
-
-      <div style={{maxWidth:'600px',margin:'0 auto',padding:'32px 24px'}}>
-
-        <div style={{textAlign:'center',marginBottom:'28px'}}>
-          <div style={{display:'inline-block',padding:'5px 14px',background:'rgba(212,163,0,0.12)',border:'1px solid rgba(212,163,0,0.3)',borderRadius:'20px',fontSize:'11px',color:'#fbbf24',marginBottom:'14px'}}>Live Demo -- No account needed</div>
-          <h2 style={{fontSize:'22px',fontWeight:'800',marginBottom:'8px'}}>
-            Upload a photo.<br/>
-            <span style={{background:'linear-gradient(135deg,#a855f7,#fbbf24)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>Watch CIC compliment it.</span>
-          </h2>
-          <p style={{fontSize:'13px',color:'#71767b',lineHeight:'1.6',maxWidth:'400px',margin:'0 auto'}}>
-            Drop any photo -- a profile picture, a selfie, anything. CIC will generate a warm, specific, personal compliment that feels genuinely human.
+    <>
+      <style>{CSS}</style>
+      <div className="cic-root" style={{ display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <div className="orb orb1"/><div className="orb orb2"/>
+        <div className="z1 card" style={{ maxWidth:420, textAlign:'center', padding:'40px 32px' }}>
+          <div style={{ fontSize:52, marginBottom:16 }}>📧</div>
+          <div style={{ fontFamily:'var(--serif)', fontSize:20, color:'var(--pl)', marginBottom:12 }}>Check Your Email</div>
+          <p style={{ color:'var(--t3)', lineHeight:1.7, fontSize:14 }}>
+            We sent a magic link to <strong style={{ color:'var(--t1)' }}>{email}</strong>.<br/>Click it to sign in. Expires in 1 hour.
           </p>
-        </div>
-
-        {/* Upload box */}
-        {!photoPreview && (
-          <div
-            onClick={()=>document.getElementById('photo-upload-input')?.click()}
-            style={{border:'2px dashed rgba(212,163,0,0.3)',borderRadius:'16px',padding:'48px 24px',textAlign:'center',cursor:'pointer',background:'rgba(212,163,0,0.03)',transition:'all 0.2s'}}
-            onMouseEnter={e=>(e.currentTarget.style.borderColor='rgba(212,163,0,0.6)')}
-            onMouseLeave={e=>(e.currentTarget.style.borderColor='rgba(212,163,0,0.3)')}>
-            <input
-              type="file" id="photo-upload-input" accept="image/*"
-              style={{display:'none'}}
-              onChange={e=>{
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = ev => setPhotoPreview(ev.target?.result as string);
-                reader.readAsDataURL(file);
-                setPhotoCompliments([]);
-              }}
-            />
-            <div style={{fontSize:'48px',marginBottom:'12px'}}> </div>
-            <div style={{fontSize:'15px',fontWeight:'600',color:'#e2e8f0',marginBottom:'6px'}}>Click to upload a photo</div>
-            <div style={{fontSize:'12px',color:'#71767b'}}>JPG, PNG or WEBP   Any photo works</div>
+          <p style={{ color:'var(--t3)', fontSize:12, marginTop:12 }}>Check spam if it does not arrive within 60 seconds.</p>
+          <div style={{display:'flex',gap:10,justifyContent:'center',marginTop:20,flexWrap:'wrap'}}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setStep('home')}>Back to home</button>
+            <a href="/dashboard" className="btn btn-primary btn-sm" style={{textDecoration:'none'}}>Go to Dashboard</a>
           </div>
-        )}
+        </div>
+      </div>
+    </>
+  )
 
-        {/* Preview + generate */}
-        {photoPreview && (
-          <div>
-            <div style={{background:'#0f0f1a',border:'1px solid #1e1e32',borderRadius:'16px',padding:'20px',marginBottom:'16px',textAlign:'center'}}>
-              <img src={photoPreview} alt="Uploaded photo" style={{maxWidth:'100%',maxHeight:'280px',borderRadius:'10px',objectFit:'cover'}}/>
-              <button
-                onClick={()=>{setPhotoPreview(null);setPhotoCompliments([])}}
-                style={{display:'block',margin:'12px auto 0',background:'transparent',border:'none',color:'#71767b',cursor:'pointer',fontSize:'12px',fontFamily:'sans-serif'}}>
-                  Remove photo
-              </button>
+  if (step === 'signup') return (
+    <>
+      <style>{CSS}</style>
+      <div className="cic-root" style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:'100vh', padding:24 }}>
+        <div className="orb orb1"/><div className="orb orb2"/>
+        <div className="z1 card card-glow" style={{ width:'100%', maxWidth:400, padding:'36px 28px' }}>
+          <div style={{ textAlign:'center', marginBottom:28 }}>
+            <div style={{ width:56, height:56, background:'linear-gradient(135deg,var(--p),var(--g))', borderRadius:16, display:'inline-flex', alignItems:'center', justifyContent:'center', fontSize:26, marginBottom:14 }}>💬</div>
+            <div style={{ fontFamily:'var(--serif)', fontSize:20, background:'linear-gradient(135deg,var(--pll),var(--gl))', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', fontWeight:700 }}>Create Your Account</div>
+            <p style={{ color:'var(--t3)', fontSize:13, marginTop:6 }}>🎉 Limited promotion -- 7 days free. No credit card.</p>
+          </div>
+
+          <div style={{ marginBottom:14 }}>
+            <label className="label">Email Address</label>
+            <input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)}
+              onKeyDown={e=>e.key==='Enter'&&handleSignup()} placeholder="your@email.com"/>
+          </div>
+          <div style={{ marginBottom:20 }}>
+            <label className="label">Referral Code (optional)</label>
+            <input className="input" type="text" value={referral} onChange={e=>setReferral(e.target.value)} placeholder="Enter referral code"/>
+          </div>
+
+          {msg && <div style={{ color:'var(--err)', fontSize:13, marginBottom:14 }}>{msg}</div>}
+
+          <button className="btn btn-primary btn-full btn-lg" onClick={handleSignup} disabled={loading}>
+            {loading ? <><span className="spin"/>&nbsp;Sending...</> : 'Send Magic Link →'}
+          </button>
+          <p style={{ textAlign:'center', fontSize:11, color:'var(--t3)', marginTop:14 }}>
+            This free trial is a limited-time promotion. Use it before it changes.
+          </p>
+          <button onClick={()=>setStep('home')} style={{ display:'block', margin:'10px auto 0', background:'none', border:'none', color:'var(--t3)', cursor:'pointer', fontSize:12, fontFamily:'var(--sans)' }}>← Back to home</button>
+        </div>
+      </div>
+    </>
+  )
+
+  if (step === 'alphadate-guide') return (
+    <>
+      <style>{CSS}</style>
+      <div className="cic-root">
+        <div className="orb orb1"/><div className="orb orb2"/>
+        <div className="z1">
+          <div className="nav">
+            <div><div className="brand">Alpha.date Guide</div><div className="nav-sub">Operator Rules</div></div>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setStep('home')}>← Back</button>
+          </div>
+          <div style={{ maxWidth:720, margin:'0 auto', padding:'40px 24px 80px' }}>
+            <div className="card card-gold" style={{ marginBottom:20 }}>
+              <div style={{ fontFamily:'var(--serif)', fontSize:16, color:'var(--gl)', marginBottom:10 }}>⚡ The Golden Hook Rule</div>
+              <p style={{ fontSize:14, color:'var(--t2)', lineHeight:1.75 }}>Every message and letter must begin with a strong hook in <strong style={{color:'var(--t1)'}}>ALL CAPITAL LETTERS</strong>. 4-7 words. No punctuation at the end. Never repeat the same hook. Applies to all three categories.</p>
             </div>
 
-            {photoCompliments.length === 0 && (
-              <button
-                onClick={async()=>{
-                  setPhotoLoading(true);
-                  await new Promise(r=>setTimeout(r,1600+Math.random()*800));
-                  setPhotoCompliments([
-                    'Something about this photo is genuinely striking -- there is a quiet confidence in the way you carry yourself that most people spend years trying to find. What were you thinking when this was taken?',
-                    'That smile tells a story and I am not sure I have figured out all of it yet. There is something behind the eyes that makes me want to understand the person behind this photo better. What is the version of you that most people never get to see?',
-                    'You have a very specific kind of energy in this photo -- the kind that feels completely effortless but is actually quite rare. What is one thing about you that this photo would never be able to capture?',
-                  ]);
-                  setPhotoLoading(false);
-                }}
-                disabled={photoLoading}
-                style={{width:'100%',padding:'14px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',border:'none',borderRadius:'10px',color:'#fff',fontSize:'14px',fontWeight:'700',cursor:'pointer',fontFamily:'sans-serif',opacity:photoLoading?0.7:1,display:'flex',alignItems:'center',justifyContent:'center',gap:'10px'}}>
-                {photoLoading
-                  ? <><div style={{width:'16px',height:'16px',border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'#fff',borderRadius:'50%',animation:'spin 0.7s linear infinite'}}></div>Generating compliment...</>
-                  : '  Generate Compliment'}
-                <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-              </button>
-            )}
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:20 }}>
+              {[['cat1','Category 1 -- Outreach'],['cat2','Category 2 -- Replies'],['cat3','Category 3 -- Bulk'],['rules','Absolute Rules']].map(([id,label]) => (
+                <button key={id} className={`tab-btn ${guideTab===id?'active':''}`} onClick={()=>setGuideTab(id)}>{label}</button>
+              ))}
+            </div>
 
-            {/* Compliment results */}
-            {photoCompliments.length > 0 && (
-              <div>
-                <div style={{fontSize:'11px',color:'#71767b',textTransform:'uppercase' as any,letterSpacing:'0.08em',fontWeight:'700',marginBottom:'12px'}}>Generated Compliments</div>
-                {photoCompliments.map((c,i)=>(
-                  <div key={i} style={{background:'#0f0f1a',border:'1px solid rgba(212,163,0,0.2)',borderRadius:'10px',padding:'16px',marginBottom:'10px'}}>
-                    <div style={{fontSize:'10px',fontWeight:'700',color:'#fbbf24',textTransform:'uppercase' as any,letterSpacing:'0.08em',marginBottom:'8px'}}>Option {i+1}</div>
-                    <div style={{fontSize:'13px',color:'#e2e8f0',lineHeight:'1.7',marginBottom:'10px'}}>{c}</div>
-                    <button
-                      onClick={()=>navigator.clipboard.writeText(c)}
-                      style={{padding:'6px 14px',background:'transparent',border:'1px solid rgba(212,163,0,0.3)',borderRadius:'6px',color:'#fbbf24',fontSize:'11px',fontWeight:'600',cursor:'pointer',fontFamily:'sans-serif'}}>
-                        Copy
-                    </button>
+            {guideTab === 'cat1' && (
+              <div className="card">
+                <div style={{ fontFamily:'var(--serif)', fontSize:15, marginBottom:12 }}>First Outreach -- /chance page, winks, likes, letters</div>
+                {[
+                  ['var(--pll)','👋 He sent a wink','DJ, THAT WINK WAS JUST THE BEGINNING and I have a feeling you already know what comes next. What made you stop on my profile?'],
+                  ['var(--gl)','❤ He liked your profile','Robert, MOST PEOPLE SCROLL PAST WITHOUT STOPPING and I noticed you did not. What caught your attention?'],
+                  ['var(--ok)','📝 Writing a letter (max 300 chars)','YOU HAVE A PRESENCE THAT STAYS WITH YOU and I mean that in the rarest way -- the kind that lingers hours after you first noticed it. What has shaped you most?'],
+                ].map(([color,label,ex]) => (
+                  <div key={label} className="ex-card" style={{ marginBottom:10 }}>
+                    <div className="ex-label" style={{ color }}>{label}</div>
+                    <div className="ex-text" style={{ color:'var(--t2)' }}>{ex}</div>
                   </div>
                 ))}
-                <button
-                  onClick={()=>setPhotoCompliments([])}
-                  style={{width:'100%',marginTop:'6px',padding:'10px',background:'transparent',border:'1px solid #1e1e32',borderRadius:'8px',color:'#71767b',fontSize:'12px',cursor:'pointer',fontFamily:'sans-serif'}}>
-                    Regenerate
-                </button>
+              </div>
+            )}
 
-                {/* CTA */}
-                <div style={{background:'rgba(124,58,237,0.08)',border:'1px solid rgba(124,58,237,0.25)',borderRadius:'12px',padding:'20px',marginTop:'20px',textAlign:'center'}}>
-                  <div style={{fontSize:'14px',fontWeight:'700',color:'#e2e8f0',marginBottom:'6px'}}>Want this inside every chat?</div>
-                  <p style={{fontSize:'12px',color:'#71767b',lineHeight:'1.6',marginBottom:'14px'}}>The CIC extension detects photos automatically and generates compliments like these directly inside your chat window -- no copy-pasting.</p>
-                  <button onClick={()=>setStep('signup')} style={{padding:'11px 28px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',border:'none',borderRadius:'8px',color:'#fff',fontSize:'13px',fontWeight:'700',cursor:'pointer',fontFamily:'sans-serif'}}>
-                    Claim Free Trial  
+            {guideTab === 'cat2' && (
+              <div className="card">
+                <div style={{ fontFamily:'var(--serif)', fontSize:15, marginBottom:8 }}>Replying to Active or Inactive Chats</div>
+                <div style={{ background:'rgba(52,211,153,0.08)', border:'1px solid rgba(52,211,153,0.2)', borderRadius:'var(--r)', padding:'10px 14px', marginBottom:14, fontSize:13, color:'var(--ok)' }}>
+                  <strong>ONE SENTENCE ONLY. 15-25 words maximum. No emojis.</strong>
+                </div>
+                {[
+                  ['💕 Romantic','There is something about the way you said that which makes it genuinely hard to think about anything else right now.'],
+                  ['😄 Playful','You say that like you have not already thought about exactly what happens next, which I am fairly certain you have.'],
+                  ['⏸ He went silent','Life has a way of getting loud sometimes and I hope yours has been the good kind of busy since we last spoke.'],
+                ].map(([label,ex]) => (
+                  <div key={label} className="ex-card" style={{ marginBottom:8 }}>
+                    <div className="ex-label" style={{ color:'var(--ok)' }}>{label}</div>
+                    <div className="ex-text" style={{ color:'var(--t2)' }}>{ex}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {guideTab === 'cat3' && (
+              <div className="card">
+                <div style={{ fontFamily:'var(--serif)', fontSize:15, marginBottom:8 }}>Sender Setup -- Bulk Content with Emojis</div>
+                <p style={{ fontSize:13, color:'var(--t3)', lineHeight:1.7, marginBottom:14 }}>Under 20 words. ~40% ALL CAPS hooks. <strong style={{color:'var(--gl)'}}>Emojis allowed and encouraged.</strong> Vary topics widely.</p>
+                {[
+                  '🌍 THE WORLD SHRANK WHEN YOU STARTED TRAVELLING -- what was the first place that genuinely changed how you think?',
+                  '☕ If you could only keep one morning habit forever, what would it be? 🤔',
+                  '🌙 LATE NIGHT THOUGHTS HIT DIFFERENTLY -- what is the last thing you thought about before sleep? 💭',
+                ].map((ex,i) => (
+                  <div key={i} style={{ background:'rgba(212,163,0,0.06)', borderRadius:'var(--r)', padding:'10px 14px', marginBottom:8, fontSize:13, color:'var(--gl)', fontStyle:'italic', lineHeight:1.6 }}>{ex}</div>
+                ))}
+              </div>
+            )}
+
+            {guideTab === 'rules' && (
+              <div className="card" style={{ borderColor:'rgba(248,113,113,0.3)' }}>
+                <div style={{ fontFamily:'var(--serif)', fontSize:15, color:'var(--err)', marginBottom:14 }}>🛑 Absolute Rules -- All Categories</div>
+                {['Never repeat the same message or letter. Not in the same shift. Not ever.',
+                  'Never reuse the same opening hook. Every conversation gets a fresh original hook.',
+                  'Never mention AI. Not directly, not indirectly, not as a joke.',
+                  'No pressure or desperation in Category 1 or Category 3 letters.',
+                  'Always proofread before sending. You make the final call on every message.',
+                  'No emojis in Category 1 or Category 2. Only Category 3.',
+                ].map((r,i) => (
+                  <div key={i} style={{ display:'flex', gap:10, padding:'8px 0', borderBottom:'1px solid rgba(248,113,113,0.1)', fontSize:13, color:'var(--t2)', lineHeight:1.6 }}>
+                    <span style={{ color:'var(--err)', flexShrink:0 }}>✕</span>{r}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ textAlign:'center', marginTop:24, padding:'20px', background:'var(--card)', border:'1px solid var(--bd)', borderRadius:'var(--rl)' }}>
+              <p style={{ fontSize:13, color:'var(--t3)' }}>Questions? WhatsApp <strong style={{color:'var(--t1)'}}>+254 113 178 973</strong></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+
+  if (step === 'install-guide') return (
+    <>
+      <style>{CSS}</style>
+      <div className="cic-root">
+        <div className="orb orb1"/><div className="orb orb2"/>
+        <div className="z1">
+          <div className="nav">
+            <div><div className="brand">Install Guide</div><div className="nav-sub">3 steps</div></div>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setStep('home')}>← Back</button>
+          </div>
+          <div style={{ maxWidth:640, margin:'0 auto', padding:'40px 24px 80px' }}>
+            <div className="section-title" style={{ marginBottom:8 }}>Choose Your Extension</div>
+            <div className="section-sub" style={{ marginBottom:24 }}>Install the one that matches your platform</div>
+
+            <div className="g2" style={{ marginBottom:32 }}>
+              {[
+                { name:'CIC -- Texting Factory', desc:'chathomebase.com and Texting Factory operators', icon:'💬', url:EXT_TF },
+                { name:'CIC -- General OF Extension', desc:'Alpha.date, OnlyFans, Fansly and 7 other platforms', icon:'🌐', url:EXT_GEN },
+              ].map(e => (
+                <div key={e.name} className="card card-gold" style={{ textAlign:'center' }}>
+                  <div style={{ fontSize:30, marginBottom:10 }}>{e.icon}</div>
+                  <div style={{ fontWeight:700, fontSize:14, marginBottom:6 }}>{e.name}</div>
+                  <div style={{ color:'var(--t3)', fontSize:12, marginBottom:14, lineHeight:1.5 }}>{e.desc}</div>
+                  <a href={e.url} target="_blank" rel="noreferrer" className="btn btn-gold btn-full" style={{ textDecoration:'none', display:'flex' }}>Install from Chrome Store →</a>
+                </div>
+              ))}
+            </div>
+
+            {[
+              ['Click Install from Chrome Store', 'Opens the official CIC listing on the Chrome Web Store.'],
+              ['Click "Add to Chrome"', 'Chrome installs the extension in seconds. The CIC icon appears in your toolbar.'],
+              ['Click the CIC icon and enter your email', 'Sign in with your registered email. The extension validates your plan and you start generating replies immediately.'],
+            ].map(([title, desc], i) => (
+              <div key={i} style={{ display:'flex', gap:14, alignItems:'flex-start', marginBottom:16 }}>
+                <div style={{ width:28, height:28, borderRadius:'50%', background:'linear-gradient(135deg,var(--p),var(--g))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, flexShrink:0, color:'#fff' }}>{i+1}</div>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:600, color:'var(--t1)', marginBottom:3 }}>{title}</div>
+                  <div style={{ fontSize:13, color:'var(--t3)', lineHeight:1.6 }}>{desc}</div>
+                </div>
+              </div>
+            ))}
+
+            <div style={{ marginTop:24, background:'rgba(52,211,153,0.06)', border:'1px solid rgba(52,211,153,0.2)', borderRadius:'var(--rl)', padding:20, textAlign:'center' }}>
+              <div style={{ color:'var(--ok)', fontWeight:600, marginBottom:10 }}>Not signed up yet?</div>
+              <button className="btn btn-primary" onClick={()=>setStep('signup')}>Create Free Account →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+
+  if (step === 'photo-demo') return (
+    <>
+      <style>{CSS}</style>
+      <div className="cic-root">
+        <div className="orb orb1"/><div className="orb orb2"/>
+        <div className="z1">
+          <div className="nav">
+            <div><div className="brand">Photo Demo</div><div className="nav-sub">See the AI in action</div></div>
+            <button className="btn btn-ghost btn-sm" onClick={()=>{ setStep('home'); setPhotoPreview(null); setPhotoResults([]); }}>← Back</button>
+          </div>
+          <div style={{ maxWidth:640, margin:'0 auto', padding:'40px 24px 80px' }}>
+            <div style={{ textAlign:'center', marginBottom:32 }}>
+              <div style={{ fontFamily:'var(--serif)', fontSize:24, marginBottom:8 }}>Upload a Photo. Watch CIC Compliment It.</div>
+              <p style={{ color:'var(--t3)', fontSize:14, lineHeight:1.7 }}>This is exactly what the extension does inside the chat window -- reads the photo and generates warm, specific, personal compliments that feel genuinely human.</p>
+            </div>
+
+            <div className="card card-gold" style={{ marginBottom:20 }}>
+              <div
+                className={`drop-zone ${photoPreview?'':'active'}`}
+                onClick={()=>!photoPreview&&fileRef.current?.click()}
+                onDragOver={e=>{ e.preventDefault(); e.currentTarget.classList.add('over'); }}
+                onDragLeave={e=>e.currentTarget.classList.remove('over')}
+                onDrop={e=>{ e.preventDefault(); e.currentTarget.classList.remove('over'); const f=e.dataTransfer.files[0]; if(f&&f.type.startsWith('image/'))handlePhoto(f); }}
+              >
+                <input ref={fileRef} type="file" accept="image/*" style={{ display:'none' }} onChange={e=>{ const f=e.target.files?.[0]; if(f)handlePhoto(f); }}/>
+                {photoPreview ? (
+                  <img src={photoPreview} alt="Preview" style={{ maxWidth:'100%', maxHeight:240, borderRadius:'var(--r)', margin:'0 auto', display:'block' }}/>
+                ) : (
+                  <>
+                    <div style={{ fontSize:40, marginBottom:12 }}>📸</div>
+                    <div style={{ fontSize:15, fontWeight:600, color:'var(--t1)', marginBottom:6 }}>Drop a photo here or click to browse</div>
+                    <div style={{ fontSize:13, color:'var(--t3)' }}>JPG, PNG or WEBP -- any photo works</div>
+                  </>
+                )}
+              </div>
+              {photoPreview && (
+                <div style={{ marginTop:16, display:'flex', gap:10 }}>
+                  <button className="btn btn-gold btn-full" onClick={generateCompliments} disabled={photoLoading}>
+                    {photoLoading ? <><span className="spin"/>&nbsp;Generating...</> : '💌 Generate Compliments'}
                   </button>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>{ setPhotoPreview(null); setPhotoResults([]); }} style={{ flexShrink:0 }}>Clear</button>
+                </div>
+              )}
+            </div>
+
+            {photoResults.length > 0 && (
+              <div className="card">
+                <div style={{ fontFamily:'var(--serif)', fontSize:15, color:'var(--gl)', marginBottom:14 }}>💌 Generated Compliments</div>
+                {photoResults.map((r,i) => (
+                  <div key={i} className="card-gold" style={{ background:'var(--bg3)', borderRadius:'var(--r)', padding:'14px', marginBottom:10, border:'1px solid var(--bd2)' }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:'var(--gl)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:8 }}>Option {i+1}</div>
+                    <div style={{ fontSize:14, color:'var(--t1)', lineHeight:1.7 }}>{r}</div>
+                    <button className="btn btn-ghost btn-sm" style={{ marginTop:10 }} onClick={()=>navigator.clipboard.writeText(r)}>⎘ Copy</button>
+                  </div>
+                ))}
+                <div style={{ marginTop:16, background:'rgba(124,58,237,0.08)', border:'1px solid var(--bd)', borderRadius:'var(--r)', padding:16, textAlign:'center' }}>
+                  <p style={{ fontSize:13, color:'var(--t2)', marginBottom:12 }}>The extension does this automatically inside every chat window -- no copy-paste needed.</p>
+                  <button className="btn btn-primary" onClick={()=>setStep('signup')}>Claim Free Trial →</button>
                 </div>
               </div>
             )}
           </div>
-        )}
-
-      </div>
-    </div>
-  )
-
-  // -- Install guide screen ------------------------------------------
-  if (step === 'install-guide') return (
-    <div style={{minHeight:'100vh',background:'#080810',color:'#e2e8f0',fontFamily:'sans-serif'}}>
-      <div style={{padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid #1e1e32',position:'sticky' as any,top:0,background:'#080810',zIndex:10}}>
-        <div style={{fontWeight:'700',fontSize:'13px',color:'#a855f7'}}>How to Install the Extension</div>
-        <button onClick={()=>setStep('home')} style={{padding:'7px 16px',background:'transparent',border:'1px solid #1e1e32',borderRadius:'6px',color:'#71767b',cursor:'pointer',fontSize:'12px',fontFamily:'sans-serif'}}>  Back</button>
-      </div>
-      <div style={{maxWidth:'600px',margin:'0 auto',padding:'32px 24px'}}>
-
-        {/* Which extension */}
-        <h3 style={{color:'#fbbf24',marginBottom:'16px',fontSize:'15px'}}>Step 1 -- Choose your extension</h3>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'28px'}}>
-          {[
-            {name:'CIC -- Texting Factory',desc:'For chathomebase.com and Texting Factory operators',icon:' ',url:EXT_TF},
-            {name:'CIC -- General Platforms',desc:'For Alpha.date, OnlyFans, Fansly and all other platforms',icon:' ',url:EXT_GENERAL},
-          ].map(e => (
-            <div key={e.name} style={{background:'#0f0f1a',border:'1px solid #1e1e32',borderRadius:'10px',padding:'18px',textAlign:'center'}}>
-              <div style={{fontSize:'26px',marginBottom:'8px'}}>{e.icon}</div>
-              <div style={{fontWeight:'600',fontSize:'12px',marginBottom:'5px'}}>{e.name}</div>
-              <div style={{color:'#71767b',fontSize:'10px',marginBottom:'12px'}}>{e.desc}</div>
-              <a href={e.url} target="_blank" rel="noreferrer"
-                style={{display:'block',padding:'7px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',borderRadius:'6px',color:'#fff',fontSize:'11px',fontWeight:'600',textDecoration:'none'}}>
-                Install from Chrome Store  
-              </a>
-            </div>
-          ))}
-        </div>
-
-        <h3 style={{color:'#fbbf24',marginBottom:'16px',fontSize:'15px'}}>Step 2 -- Install it</h3>
-        {[
-          'Click the button above -- it opens the Chrome Web Store page for that extension',
-          'Click the blue "Add to Chrome" button on the Chrome Web Store page',
-          'Click "Add extension" in the popup that appears',
-          'The CIC icon will appear in your Chrome toolbar (top right)',
-        ].map((s,i) => (
-          <div key={i} style={{display:'flex',gap:'12px',alignItems:'flex-start',marginBottom:'12px'}}>
-            <div style={{width:'24px',height:'24px',borderRadius:'50%',background:'linear-gradient(135deg,#7c3aed,#d4a300)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:'700',flexShrink:0}}>{i+1}</div>
-            <div style={{fontSize:'13px',color:'#71767b',lineHeight:'1.6',paddingTop:'2px'}}>{s}</div>
-          </div>
-        ))}
-
-        <h3 style={{color:'#fbbf24',margin:'24px 0 16px',fontSize:'15px'}}>Step 3 -- Log in to the extension</h3>
-        {[
-          'Click the CIC icon in your Chrome toolbar',
-          'Enter the email address you signed up with on this page',
-          'Click Sign In -- the extension opens the app and logs you in automatically',
-        ].map((s,i) => (
-          <div key={i} style={{display:'flex',gap:'12px',alignItems:'flex-start',marginBottom:'12px'}}>
-            <div style={{width:'24px',height:'24px',borderRadius:'50%',background:'rgba(168,85,247,0.2)',border:'1px solid rgba(168,85,247,0.4)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:'700',color:'#a855f7',flexShrink:0}}>{i+1}</div>
-            <div style={{fontSize:'13px',color:'#71767b',lineHeight:'1.6',paddingTop:'2px'}}>{s}</div>
-          </div>
-        ))}
-
-        <div style={{marginTop:'24px',background:'rgba(34,197,94,0.06)',border:'1px solid rgba(34,197,94,0.2)',borderRadius:'10px',padding:'16px',textAlign:'center'}}>
-          <p style={{fontSize:'13px',color:'#22c55e',margin:'0 0 8px',fontWeight:'600'}}>  Not signed up yet?</p>
-          <button onClick={()=>setStep('signup')} style={{padding:'9px 24px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',border:'none',borderRadius:'7px',color:'#fff',fontSize:'13px',fontWeight:'600',cursor:'pointer',fontFamily:'sans-serif'}}>
-            Create Free Account  
-          </button>
         </div>
       </div>
-    </div>
+    </>
   )
 
-  // -- Home screen ---------------------------------------------------
+  // HOME
   return (
-    <div style={{minHeight:'100vh',background:'#080810',color:'#e2e8f0',fontFamily:'sans-serif'}}>
+    <>
+      <style>{CSS}</style>
+      <div className="cic-root">
+        <div className="orb orb1"/>
+        <div className="orb orb2"/>
+        <div className="z1">
 
-      {/* Nav */}
-      <div style={{padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid #1e1e32',position:'sticky' as any,top:0,background:'#080810',zIndex:10}}>
-        <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
-          <div style={{width:'34px',height:'34px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',borderRadius:'9px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'16px'}}> </div>
-          <div>
-            <div style={{fontWeight:'700',fontSize:'13px',background:'linear-gradient(135deg,#a855f7,#fbbf24)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>Chatter's Inner Circle</div>
-            <div style={{fontSize:'10px',color:'#444460'}}>AI Reply Assistant   Available Worldwide</div>
-          </div>
-        </div>
-        <div style={{display:'flex',gap:'8px'}}>
-          <button onClick={()=>setStep('install-guide')} style={{padding:'8px 14px',background:'transparent',border:'1px solid #1e1e32',borderRadius:'7px',color:'#71767b',cursor:'pointer',fontSize:'11px',fontFamily:'sans-serif'}}>
-            Install Extension
-          </button>
-          <button onClick={()=>setStep('signup')} style={{padding:'8px 18px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',border:'none',borderRadius:'7px',color:'#fff',fontWeight:'600',cursor:'pointer',fontSize:'12px',fontFamily:'sans-serif'}}>
-            Get Started
-          </button>
-        </div>
-      </div>
-
-      {/* Hero */}
-      <div style={{maxWidth:'680px',margin:'0 auto',padding:'70px 24px 40px',textAlign:'center'}}>
-        <div style={{display:'inline-block',padding:'5px 14px',background:'rgba(124,58,237,0.15)',border:'1px solid rgba(124,58,237,0.3)',borderRadius:'20px',fontSize:'11px',color:'#a855f7',marginBottom:'18px'}}>
-          AI Reply Assistant   10+ Platforms   No Country Restrictions
-        </div>
-        <h1 style={{fontSize:'clamp(26px,5vw,46px)',fontWeight:'800',margin:'0 0 14px',lineHeight:'1.2'}}>
-          Replies That Get Him
-          <span style={{display:'block',background:'linear-gradient(135deg,#a855f7,#fbbf24)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>
-            Hooked Every Time
-          </span>
-        </h1>
-        <p style={{fontSize:'15px',color:'#71767b',lineHeight:'1.6',maxWidth:'480px',margin:'0 auto 28px'}}>
-          CIC generates smart, warm replies for operators on dating and subscription platforms. Works on Texting Factory, Alpha.date, OnlyFans, Fansly, and more. Available in every country.
-        </p>
-        <div style={{display:'flex',gap:'12px',justifyContent:'center',flexWrap:'wrap' as any}}>
-          <button onClick={()=>setStep('signup')} style={{padding:'13px 32px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',border:'none',borderRadius:'9px',color:'#fff',fontSize:'15px',fontWeight:'700',cursor:'pointer',boxShadow:'0 4px 20px rgba(124,58,237,0.35)',fontFamily:'sans-serif'}}>
-            Claim Free Trial -- 7 Days  
-          </button>
-          <button onClick={()=>setStep('install-guide')} style={{padding:'13px 24px',background:'transparent',border:'1px solid rgba(168,85,247,0.4)',borderRadius:'9px',color:'#a855f7',fontSize:'14px',fontWeight:'600',cursor:'pointer',fontFamily:'sans-serif'}}>
-            Download Extension  
-          </button>
-        </div>
-
-        {/* Photo demo CTA */}
-        <div style={{marginTop:'20px'}}>
-          <button onClick={()=>setStep('photo-demo')}
-            style={{display:'inline-flex',alignItems:'center',gap:'8px',padding:'10px 22px',background:'rgba(212,163,0,0.1)',border:'1px solid rgba(212,163,0,0.35)',borderRadius:'30px',color:'#fbbf24',fontSize:'13px',fontWeight:'600',cursor:'pointer',fontFamily:'sans-serif',transition:'all 0.2s'}}>
-              Try it -- upload a photo and see how CIC compliments it
-          </button>
-        </div>
-      </div>
-
-      {/* Photo Demo Feature Section */}
-      <div style={{maxWidth:'680px',margin:'0 auto',padding:'0 24px 56px'}}>
-        <div style={{background:'rgba(212,163,0,0.06)',border:'1px solid rgba(212,163,0,0.2)',borderRadius:'16px',padding:'28px',textAlign:'center'}}>
-          <div style={{display:'inline-block',padding:'5px 14px',background:'rgba(212,163,0,0.15)',border:'1px solid rgba(212,163,0,0.3)',borderRadius:'20px',fontSize:'11px',color:'#fbbf24',marginBottom:'14px',fontWeight:'600'}}>
-            LIVE DEMO -- Try it yourself
-          </div>
-          <h2 style={{fontSize:'20px',fontWeight:'700',marginBottom:'10px',color:'#e2e8f0'}}>
-            Upload a photo. Watch CIC compliment it.
-          </h2>
-          <p style={{fontSize:'13px',color:'#71767b',lineHeight:'1.7',maxWidth:'460px',margin:'0 auto 20px'}}>
-            Drop any photo -- a profile picture, a selfie, anything. CIC reads the image and generates a warm, specific, personal compliment that feels genuinely human. This is exactly what the extension does inside the chat window.
-          </p>
-          <button onClick={()=>setStep('photo-demo')}
-            style={{padding:'13px 32px',background:'linear-gradient(135deg,#d4a300,#fbbf24)',border:'none',borderRadius:'9px',color:'#0a0a1a',fontSize:'14px',fontWeight:'700',cursor:'pointer',fontFamily:'sans-serif',boxShadow:'0 4px 20px rgba(212,163,0,0.35)'}}>
-              Upload a Photo -- See the Magic
-          </button>
-          <div style={{display:'flex',gap:'20px',justifyContent:'center',marginTop:'16px',flexWrap:'wrap' as any}}>
-            {['Reads the photo intelligently','Generates 3 specific options','Feels genuinely personal, not generic'].map((f,i) => (
-              <div key={i} style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'11px',color:'#71767b'}}>
-                <span style={{color:'#fbbf24'}}> </span>{f}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Extensions -- Item 1: real Chrome Web Store links */}
-      <div style={{maxWidth:'680px',margin:'0 auto',padding:'0 24px 60px'}}>
-        <h2 style={{textAlign:'center',color:'#fbbf24',marginBottom:'6px',fontSize:'18px'}}>Chrome Extensions</h2>
-        <p style={{textAlign:'center',color:'#71767b',fontSize:'12px',marginBottom:'18px'}}>Install the extension for your platform. Sign up first to activate it.</p>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'14px'}}>
-          {[
-            {name:'CIC -- Texting Factory',desc:'chathomebase.com & Texting Factory',icon:' ',url:EXT_TF,guide:null},
-            {name:'CIC -- General Platforms',desc:'Alpha.date, OnlyFans, Fansly & more',icon:' ',url:EXT_GENERAL,guide:'alphadate-guide'},
-          ].map(e => (
-            <div key={e.name} style={{background:'#0f0f1a',border:'1px solid #1e1e32',borderRadius:'10px',padding:'20px',textAlign:'center'}}>
-              <div style={{fontSize:'28px',marginBottom:'8px'}}>{e.icon}</div>
-              <div style={{fontWeight:'600',fontSize:'13px',marginBottom:'5px'}}>{e.name}</div>
-              <div style={{color:'#71767b',fontSize:'11px',marginBottom:'12px'}}>{e.desc}</div>
-              <a href={e.url} target="_blank" rel="noreferrer"
-                style={{display:'block',padding:'7px 16px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',borderRadius:'6px',color:'#fff',fontSize:'11px',fontWeight:'600',textDecoration:'none',marginBottom:'8px'}}>
-                Install from Chrome Store  
-              </a>
-              {e.guide && (
-                <button onClick={()=>setStep(e.guide!)} style={{width:'100%',padding:'6px',background:'transparent',border:'1px solid rgba(251,191,36,0.3)',borderRadius:'6px',color:'#fbbf24',fontSize:'10px',fontWeight:'600',cursor:'pointer',fontFamily:'sans-serif'}}>
-                    View Alpha.date Guide
-                </button>
-              )}
-              <button onClick={()=>setStep('install-guide')} style={{width:'100%',marginTop:'6px',padding:'6px',background:'transparent',border:'1px solid #1e1e32',borderRadius:'6px',color:'#444460',fontSize:'10px',cursor:'pointer',fontFamily:'sans-serif'}}>
-                How to install  
-              </button>
+          {/* Nav */}
+          <nav className="nav">
+            <div>
+              <div className="brand">Chatter's Inner Circle</div>
+              <div className="nav-sub">AI Reply Assistant · Available Worldwide</div>
             </div>
-          ))}
-        </div>
-      </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setStep('install-guide')}>Extensions</button>
+              <a href="/dashboard" className="btn btn-ghost btn-sm" style={{textDecoration:'none'}}>Dashboard</a>
+              <button className="btn btn-primary btn-sm" onClick={()=>setStep('signup')}>Get Started</button>
+            </div>
+          </nav>
 
-      {/* Plans */}
-      <div style={{maxWidth:'780px',margin:'0 auto',padding:'0 24px 70px'}}>
-        <h2 style={{textAlign:'center',marginBottom:'8px',fontSize:'18px'}}>Simple Pricing</h2>
-        <p style={{textAlign:'center',color:'#71767b',fontSize:'12px',marginBottom:'24px'}}>Available worldwide. Pay via M-Pesa, card, PayPal, or crypto.</p>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))',gap:'14px'}}>
-          {[
-            {name:'Free Trial',price:'Free',period:'Limited Promotion',color:'#22c55e',badge:'NOW',features:['Full Pro access days 1-3','20 replies/day days 4-7','Both extensions included','All 10 platforms','No credit card   Claim now']},
-            {name:'Basic',price:'$8',period:'per month',color:'#60a5fa',badge:'',features:['50 replies per day','All 10 platforms','Standard AI quality','Both extensions','Email support']},
-            {name:'Pro',price:'$15',period:'per month',color:'#a855f7',badge:'BEST',features:['Unlimited replies daily','Full explicit content','Premium AI quality','Priority support','Referral rewards']},
-          ].map(p => (
-            <div key={p.name} style={{background:'#0f0f1a',border:`1px solid ${p.name==='Pro'?'rgba(168,85,247,0.4)':'#1e1e32'}`,borderRadius:'10px',padding:'22px',position:'relative' as any}}>
-              {p.badge && <div style={{position:'absolute' as any,top:'10px',right:'10px',background:'linear-gradient(135deg,#7c3aed,#d4a300)',padding:'2px 8px',borderRadius:'10px',fontSize:'9px',fontWeight:'700',color:'#fff'}}>{p.badge}</div>}
-              <div style={{color:p.color,fontWeight:'700',marginBottom:'6px',fontSize:'13px'}}>{p.name}</div>
-              <div style={{fontSize:'26px',fontWeight:'800',marginBottom:'3px'}}>{p.price}</div>
-              <div style={{color:'#444460',fontSize:'11px',marginBottom:'18px'}}>{p.period}</div>
-              {p.features.map(f => (
-                <div key={f} style={{display:'flex',gap:'7px',marginBottom:'7px',fontSize:'12px',color:'#71767b',alignItems:'flex-start'}}>
-                  <span style={{color:p.color,flexShrink:0}}> </span>{f}
+          {/* Hero */}
+          <section className="hero">
+            <div className="hero-badge">AI Reply Assistant · 10+ Platforms · No Country Restrictions</div>
+            <h1 className="hero-title">
+              Replies That Get Him
+              <span className="hero-grad">Hooked Every Time</span>
+            </h1>
+            <p className="hero-sub">
+              CIC generates smart, warm replies for professional operators on dating and subscription platforms. Works on Texting Factory, Alpha.date, OnlyFans, Fansly, and more.
+            </p>
+            <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap', marginBottom:16 }}>
+              <button className="btn btn-primary btn-lg" onClick={()=>setStep('signup')}>Claim Free Trial -- 7 Days 🎉</button>
+              <button className="btn btn-outline btn-lg" onClick={()=>setStep('install-guide')}>Download Extension →</button>
+            </div>
+            <button
+              onClick={()=>setStep('photo-demo')}
+              style={{ background:'rgba(212,163,0,0.1)', border:'1px solid rgba(212,163,0,0.3)', borderRadius:30, padding:'9px 22px', color:'var(--gl)', fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:'var(--sans)', transition:'all 0.2s' }}>
+              📸 Try it -- upload a photo and see how CIC compliments it
+            </button>
+          </section>
+
+          {/* Photo demo section */}
+          <section className="section">
+            <div className="card card-gold" style={{ textAlign:'center', padding:32 }}>
+              <div style={{ display:'inline-block', padding:'5px 16px', background:'rgba(212,163,0,0.15)', border:'1px solid rgba(212,163,0,0.3)', borderRadius:20, fontSize:11, color:'var(--gl)', marginBottom:14, fontWeight:600, letterSpacing:'0.05em' }}>LIVE DEMO -- Try it yourself</div>
+              <div style={{ fontFamily:'var(--serif)', fontSize:22, marginBottom:10 }}>Upload a photo. Watch CIC compliment it.</div>
+              <p style={{ color:'var(--t3)', fontSize:14, lineHeight:1.7, maxWidth:480, margin:'0 auto 20px' }}>Drop any photo and CIC reads it, then generates a warm, specific, personal compliment that feels genuinely human. This is exactly what the extension does inside the chat window.</p>
+              <button className="btn btn-gold btn-lg" onClick={()=>setStep('photo-demo')}>📸 Upload a Photo -- See the Magic</button>
+              <div style={{ display:'flex', gap:24, justifyContent:'center', marginTop:16, flexWrap:'wrap' }}>
+                {['Reads the photo intelligently','Generates 3 specific options','Feels genuinely personal'].map(f => (
+                  <div key={f} style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'var(--t3)' }}>
+                    <span style={{ color:'var(--gl)' }}>✓</span>{f}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* Extensions */}
+          <section className="section">
+            <div className="section-title" style={{ fontFamily:'var(--serif)', color:'var(--gl)' }}>Chrome Extensions</div>
+            <div className="section-sub">Install the extension for your platform. Sign up first to activate it.</div>
+            <div className="g2">
+              {[
+                { name:'CIC -- Texting Factory', desc:'chathomebase.com and Texting Factory', icon:'💬', url:EXT_TF, guide: null as string|null },
+                { name:'CIC -- General OF Extension', desc:'Alpha.date, OnlyFans, Fansly and more', icon:'🌐', url:EXT_GEN, guide:'alphadate-guide' },
+              ].map(e => (
+                <div key={e.name} className="card" style={{ textAlign:'center' }}>
+                  <div style={{ fontSize:30, marginBottom:10 }}>{e.icon}</div>
+                  <div style={{ fontWeight:700, fontSize:14, marginBottom:5 }}>{e.name}</div>
+                  <div style={{ color:'var(--t3)', fontSize:12, marginBottom:14 }}>{e.desc}</div>
+                  <a href={e.url} target="_blank" rel="noreferrer" className="btn btn-primary btn-full btn-sm" style={{ textDecoration:'none', display:'flex', marginBottom:8 }}>Install from Chrome Store →</a>
+                  {e.guide && <button className="btn btn-ghost btn-full btn-sm" onClick={()=>setStep(e.guide as Step)}>📖 Alpha.date Operator Guide</button>}
+                  <button className="btn btn-ghost btn-full btn-sm" style={{ marginTop:6 }} onClick={()=>setStep('install-guide')}>How to install →</button>
                 </div>
               ))}
-              <button onClick={()=>setStep('signup')} style={{width:'100%',marginTop:'14px',padding:'9px',background:p.name==='Pro'?'linear-gradient(135deg,#7c3aed,#d4a300)':'transparent',border:`1px solid ${p.color}`,borderRadius:'6px',color:p.name==='Pro'?'#fff':p.color,cursor:'pointer',fontWeight:'600',fontSize:'12px',fontFamily:'sans-serif'}}>
-                {p.name==='Free Trial'?'Start Free':p.name==='Pro'?'Get Pro':'Get Started'}
-              </button>
             </div>
-          ))}
-        </div>
-      </div>
+          </section>
 
-      {/* Payment */}
-      <div style={{maxWidth:'560px',margin:'0 auto',padding:'0 24px 70px',textAlign:'center'}}>
-        <div style={{background:'rgba(124,58,237,0.05)',border:'1px solid rgba(124,58,237,0.2)',borderRadius:'12px',padding:'28px'}}>
-          <h3 style={{color:'#a855f7',marginBottom:'12px',fontSize:'16px'}}>How to Pay for Pro</h3>
-          <p style={{color:'#71767b',fontSize:'13px',lineHeight:'1.6',margin:'0 0 12px'}}>
-            Payment details are sent privately to your email when you request a Pro upgrade inside the extension. We accept M-Pesa, Visa, Mastercard, PayPal, and crypto.
-          </p>
-          <p style={{color:'#444460',fontSize:'11px',margin:0}}>Available in every country. No geo restrictions.</p>
-        </div>
-      </div>
+          {/* Pricing */}
+          <section className="section">
+            <div className="section-title" style={{ fontFamily:'var(--serif)' }}>Simple Pricing</div>
+            <div className="section-sub">Available worldwide. Pay via M-Pesa, card, PayPal, or crypto.</div>
+            <div className="g3">
+              {[
+                { name:'Free Trial', price:'Free', period:'Limited Promotion', color:'var(--ok)', badge:'NOW', features:['Full Pro access days 1-3','20 replies/day days 4-7','Both extensions included','All 10 platforms','No credit card needed'] },
+                { name:'Basic', price:'$8', period:'per month', color:'#60a5fa', badge:'', features:['50 replies per day','All 10 platforms','Standard AI quality','Both extensions','Email support'] },
+                { name:'Pro', price:'$15', period:'per month', color:'var(--pl)', badge:'BEST', features:['Unlimited replies daily','Full explicit content','Premium AI quality','Priority support','Referral rewards'] },
+              ].map(p => (
+                <div key={p.name} className={`card ${p.name==='Pro'?'plan-best':''}`} style={{ position:'relative' }}>
+                  {p.badge && <div className="plan-badge">{p.badge}</div>}
+                  <div style={{ color:p.color, fontWeight:700, fontSize:13, marginBottom:6, fontFamily:'var(--serif)' }}>{p.name}</div>
+                  <div style={{ fontSize:28, fontWeight:800, marginBottom:3 }}>{p.price}</div>
+                  <div style={{ color:'var(--t3)', fontSize:11, marginBottom:18 }}>{p.period}</div>
+                  {p.features.map(f => (
+                    <div key={f} style={{ display:'flex', gap:7, marginBottom:7, fontSize:12, color:'var(--t3)', alignItems:'flex-start' }}>
+                      <span style={{ color:p.color, flexShrink:0 }}>✓</span>{f}
+                    </div>
+                  ))}
+                  <button className="btn btn-full btn-sm" style={{ marginTop:14, background:p.name==='Pro'?'linear-gradient(135deg,var(--p),var(--g))':'transparent', border:`1px solid ${p.color}`, color:p.name==='Pro'?'#fff':p.color }} onClick={()=>setStep('signup')}>
+                    {p.name==='Free Trial'?'Start Free':p.name==='Pro'?'Get Pro':'Get Started'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
 
-      {/* Referral */}
-      <div style={{maxWidth:'560px',margin:'0 auto',padding:'0 24px 70px',textAlign:'center'}}>
-        <div style={{background:'rgba(234,179,8,0.08)',border:'1px solid rgba(234,179,8,0.2)',borderRadius:'12px',padding:'28px'}}>
-          <div style={{fontSize:'30px',marginBottom:'10px'}}> </div>
-          <h3 style={{color:'#fbbf24',marginBottom:'10px',fontSize:'16px'}}>Refer Friends, Earn Pro Free</h3>
-          <p style={{color:'#71767b',fontSize:'13px',lineHeight:'1.6',margin:'0 0 12px'}}>
-            Every referral earns <b style={{color:'#fbbf24'}}>150 points</b>. Collect <b style={{color:'#fbbf24'}}>1,500 points</b> and get 1 month Pro free ($15 value).
-          </p>
-          <p style={{color:'#444460',fontSize:'11px',margin:0}}>Your referral code appears in the extension after signup.</p>
-        </div>
-      </div>
+          {/* Payment */}
+          <section className="section" style={{ maxWidth:580 }}>
+            <div className="card" style={{ textAlign:'center', padding:28 }}>
+              <div style={{ fontFamily:'var(--serif)', fontSize:18, color:'var(--pl)', marginBottom:12 }}>How to Pay for Pro</div>
+              <p style={{ color:'var(--t3)', fontSize:14, lineHeight:1.7 }}>Payment details are sent privately to your email when you request an upgrade inside the extension. We accept M-Pesa, Visa, Mastercard, PayPal, and crypto. Available in every country.</p>
+            </div>
+          </section>
 
-      {/* Footer */}
-      <div style={{borderTop:'1px solid #111120',padding:'24px',textAlign:'center',color:'#444460',fontSize:'11px'}}>
-        <p style={{margin:'0 0 6px'}}>Chatter's Inner Circle   2026 -- AI Reply Assistant   Available Worldwide</p>
-        <p style={{margin:'0 0 8px'}}>Support: <a href="mailto:whwva47@gmail.com" style={{color:'#a855f7',textDecoration:'none'}}>whwva47@gmail.com</a></p>
-        <div style={{display:'flex',gap:'16px',justifyContent:'center',flexWrap:'wrap' as any}}>
-          <button onClick={()=>setStep('photo-demo')} style={{background:'none',border:'none',color:'#71767b',cursor:'pointer',fontSize:'11px',fontFamily:'sans-serif'}}>  Photo Demo</button>
-          <button onClick={()=>setStep('alphadate-guide')} style={{background:'none',border:'none',color:'#71767b',cursor:'pointer',fontSize:'11px',fontFamily:'sans-serif'}}>Alpha.date Guide</button>
-          <button onClick={()=>setStep('install-guide')} style={{background:'none',border:'none',color:'#71767b',cursor:'pointer',fontSize:'11px',fontFamily:'sans-serif'}}>Install Guide</button>
-          <a href={EXT_TF} target="_blank" rel="noreferrer" style={{color:'#71767b',textDecoration:'none',fontSize:'11px'}}>TF Extension</a>
-          <a href={EXT_GENERAL} target="_blank" rel="noreferrer" style={{color:'#71767b',textDecoration:'none',fontSize:'11px'}}>General Extension</a>
+          {/* Referral */}
+          <section className="section" style={{ maxWidth:580 }}>
+            <div className="card card-gold" style={{ textAlign:'center', padding:28 }}>
+              <div style={{ fontSize:36, marginBottom:12 }}>🎁</div>
+              <div style={{ fontFamily:'var(--serif)', fontSize:18, color:'var(--gl)', marginBottom:10 }}>Refer Friends, Earn Pro Free</div>
+              <p style={{ color:'var(--t3)', fontSize:14, lineHeight:1.7 }}>Every referral earns <strong style={{color:'var(--gl)'}}>150 points</strong>. Collect <strong style={{color:'var(--gl)'}}>1,500 points</strong> and get 1 month Pro free ($15 value). Your referral code appears in the extension after signup.</p>
+            </div>
+          </section>
+
+          {/* Footer */}
+          <footer style={{ borderTop:'1px solid var(--bd)', padding:'24px', textAlign:'center', color:'var(--t3)', fontSize:12 }}>
+            <p style={{ marginBottom:8 }}>Chatter's Inner Circle &copy; 2026 -- AI Reply Assistant · Available Worldwide</p>
+            <p style={{ marginBottom:12 }}>Support: <a href="mailto:whwva47@gmail.com" style={{ color:'var(--pl)', textDecoration:'none' }}>whwva47@gmail.com</a> · WhatsApp: +254 113 178 973</p>
+            <div style={{ display:'flex', gap:16, justifyContent:'center', flexWrap:'wrap' }}>
+              <a href="/dashboard" style={{ color:'var(--t3)', textDecoration:'none', fontSize:12 }}>Dashboard</a>
+              <button onClick={()=>setStep('photo-demo')} style={{ background:'none', border:'none', color:'var(--t3)', cursor:'pointer', fontSize:12, fontFamily:'var(--sans)' }}>Photo Demo</button>
+              <button onClick={()=>setStep('alphadate-guide')} style={{ background:'none', border:'none', color:'var(--t3)', cursor:'pointer', fontSize:12, fontFamily:'var(--sans)' }}>Alpha.date Guide</button>
+              <button onClick={()=>setStep('install-guide')} style={{ background:'none', border:'none', color:'var(--t3)', cursor:'pointer', fontSize:12, fontFamily:'var(--sans)' }}>Install Guide</button>
+              <a href={EXT_TF} target="_blank" rel="noreferrer" style={{ color:'var(--t3)', textDecoration:'none', fontSize:12 }}>TF Extension</a>
+              <a href={EXT_GEN} target="_blank" rel="noreferrer" style={{ color:'var(--t3)', textDecoration:'none', fontSize:12 }}>General Extension</a>
+            </div>
+          </footer>
+
         </div>
       </div>
-    </div>
+    </>
   )
 }
