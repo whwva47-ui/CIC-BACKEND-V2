@@ -535,13 +535,16 @@ async function callAI(systemPrompt: string, userPrompt: string): Promise<string>
   // Groq -- primary (fast, cheap, capable)
   if (groqKey) {
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000); // 8s timeout
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        signal: controller.signal,
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
         body: JSON.stringify({
-          model:       'llama-3.1-8b-instant', // faster and more reliable than 70b for this use case
-          max_tokens:  800,
-          temperature: 0.85,
+          model:       'llama-3.1-8b-instant',
+          max_tokens:  500,  // reduced for faster response
+          temperature: 0.82,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user',   content: userPrompt   },
