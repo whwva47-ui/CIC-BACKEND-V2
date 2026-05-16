@@ -686,17 +686,12 @@ Each reply must:
 - NEVER share or request personal contact information — deflect with warmth and wit when he asks
 - NEVER use "Chat", "Chatter", or any platform term as his name${langInstruction}
 
-OUTPUT FORMAT (JSON only, no other text):
-{
-  "replies": [
-    {"tone": "Warm", "text": "..."},
-    {"tone": "Flirty", "text": "..."},
-    {"tone": "Naughty", "text": "..."},
-    {"tone": "Playful", "text": "..."}
-  ],
-  "analysis": "one sentence about his emotional state, what he needs right now, and what will make him reply",
-  "modelUsed": "cic-v2"
-}`;
+OUTPUT FORMAT — CRITICAL:
+Return ONLY a valid JSON object. No prose. No markdown. No code fences. No JS comments (// breaks JSON).
+Exactly 4 replies. Tone labels must be exactly: "Warm", "Flirty", "Naughty", "Playful". No other labels. No annotations. No language notes inside tone fields. Every "text" is a plain string.
+
+Example of the ONLY acceptable output format:
+{"replies":[{"tone":"Warm","text":"reply here"},{"tone":"Flirty","text":"reply here"},{"tone":"Naughty","text":"reply here"},{"tone":"Playful","text":"reply here"}],"analysis":"one sentence","modelUsed":"cic-v2"}`;
 }
 
 function buildGenericUserPrompt(message: string, ctx: any): string {
@@ -721,17 +716,13 @@ function buildGenericUserPrompt(message: string, ctx: any): string {
   parts.push('');
   parts.push('Last message from him: "' + message + '"');
   parts.push('');
-
-  // Auto-detect language from his message if not already set in targetLanguage
-  // Hint to the AI: if his message is not in English, reply in the same language unless overridden
-  parts.push('LANGUAGE NOTE: If his message above is written in a language other than English, at least 2 of the 4 reply options must be in that same language. If he writes in English, reply in English. Follow any language override in the system prompt if present.');
-  parts.push('');
-  parts.push('Generate 4 reply options. Each must:');
+  parts.push('Generate exactly 4 reply options. Each must:');
   parts.push('1. Open with something that references HIM specifically in the first 8 words');
   parts.push('2. Reference at least one specific detail from the conversation history above');
   parts.push('3. End with a personalized CTA that makes replying feel irresistible');
   parts.push('4. Be genuinely different in approach from the other 3 options — not just slight wording variations');
-  parts.push('If he was naughty or explicit, at least 2 options must match his energy. Never promise or imply meeting in person. Never share contact info — if he asked for it, deflect with warmth and wit then redirect. Never use "Chat" or platform terms as his name.');
+  parts.push('Reply language: match the language he wrote in. If English, all 4 replies in English. If another language, all 4 in that language. Do NOT mix languages unless a language override is set in the system prompt.');
+  parts.push('If he was naughty or explicit, at least 2 options must match his energy. Never promise or imply meeting in person. Never share contact info — deflect with warmth and wit then redirect. Never use "Chat" or platform terms as his name.');
   return parts.join('\n');
 }
 
@@ -749,9 +740,10 @@ async function callAI(systemPrompt: string, userPrompt: string): Promise<string>
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
         body: JSON.stringify({
-          model:       'llama-3.3-70b-versatile',
-          max_tokens:  900,
-          temperature: 0.88,
+          model:           'llama-3.3-70b-versatile',
+          max_tokens:      900,
+          temperature:     0.88,
+          response_format: { type: 'json_object' },  // enforce valid JSON — prevents comment injection
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user',   content: userPrompt   },
@@ -780,9 +772,10 @@ async function callAI(systemPrompt: string, userPrompt: string): Promise<string>
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
         body: JSON.stringify({
-          model:       'llama-3.1-8b-instant',
-          max_tokens:  800,
-          temperature: 0.85,
+          model:           'llama-3.1-8b-instant',
+          max_tokens:      800,
+          temperature:     0.85,
+          response_format: { type: 'json_object' },  // enforce valid JSON
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user',   content: userPrompt   },
@@ -826,39 +819,157 @@ async function callAI(systemPrompt: string, userPrompt: string): Promise<string>
   throw new Error('All AI providers failed. Check API keys in Vercel environment variables.');
 }
 
-function parseAIResponse(text: string, platform: string, scenario: any): any {
-  try {
-    const clean  = text.replace(/```json\n?|```\n?/g, '').trim();
-    const parsed = JSON.parse(clean);
-    if (parsed.replies) return { ...parsed, modelUsed: parsed.modelUsed || 'cic-v2' };
-  } catch { /* not JSON -- parse as text */ }
+function stripJsonComments(str: string): string {
+  // Remove JS-style // comments that appear OUTSIDE of quoted strings
+  // Strategy: walk char by char, track whether we are inside a JSON string
+  let result = '';
+  let inString = false;
+  let escape = false;
+  let i = 0;
+  while (i < str.length) {
+    const ch = str[i];
+    if (escape) {
+      result += ch;
+      escape = false;
+      i++;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      result += ch;
+      escape = true;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (!inString && ch === '/' && str[i + 1] === '/') {
+      // Skip to end of line
+      while (i < str.length && str[i] !== '\n') i++;
+      continue;
+    }
+    result += ch;
+    i++;
+  }
+  // Also strip trailing commas before } or ] which break JSON.parse
+  return result.replace(/,\s*([\]}])/g, '$1');
+}
 
+function sanitizeReply(r: any, i: number): { tone: string; text: string } {
+  const TONES = ['Warm', 'Flirty', 'Naughty', 'Playful'];
+  const fallbackTone = TONES[i] || ('Reply ' + (i + 1));
+  if (r && typeof r === 'object') {
+    const text = (r.text || r.reply || r.content || r.message || '').toString().trim();
+    const rawTone = (r.tone || r.label || r.style || fallbackTone).toString();
+    // Aggressively strip tone annotations the AI injects:
+    // - "Warm (as language...)"  - "Spanish (as language override...)"
+    // - "Flirty // escalate"     - "Naughty [note]"
+    // Then map to exact known tones or fall back
+    let tone = rawTone
+      .replace(/\s*[\(\[].*?[\)\]].*/g, '')   // strip (anything) or [anything] and onwards
+      .replace(/\s*\/\/.*/g, '')               // strip // comments
+      .replace(/\s*#.*/g, '')                  // strip # annotations
+      .trim();
+    // Map non-standard tones to canonical set
+    const toneMap: Record<string, string> = {
+      warm: 'Warm', romantic: 'Warm', sweet: 'Warm', tender: 'Warm', gentle: 'Warm',
+      flirty: 'Flirty', flirtatious: 'Flirty', teasing: 'Flirty', suggestive: 'Flirty',
+      naughty: 'Naughty', sensual: 'Naughty', explicit: 'Naughty', spicy: 'Naughty', erotic: 'Naughty', hot: 'Naughty',
+      playful: 'Playful', witty: 'Playful', humorous: 'Playful', funny: 'Playful', light: 'Playful',
+      // Language names that leak into tone field — map back to positional tone
+      spanish: '', french: '', german: '', portuguese: '', italian: '',
+    };
+    const mapped = toneMap[tone.toLowerCase()];
+    if (mapped === '') tone = fallbackTone;          // was a language name, use positional
+    else if (mapped)   tone = mapped;                // known synonym → canonical
+    else if (!['Warm','Flirty','Naughty','Playful'].includes(tone)) tone = fallbackTone; // unknown → positional
+    return { tone, text };
+  }
+  if (typeof r === 'string') {
+    return { tone: fallbackTone, text: r.trim() };
+  }
+  return { tone: fallbackTone, text: '' };
+}
+
+function parseAIResponse(text: string, platform: string, scenario: any): any {
+  const SAFE_RESULT = (replies: Array<{tone:string;text:string}>, analysis?: string) => ({
+    replies: replies
+      .slice(0, 4)                               // never more than 4
+      .map((r, i) => sanitizeReply(r, i))
+      .filter(r => r.text.length > 0),           // drop empty
+    analysis: (analysis || '').toString().trim() || undefined,
+    modelUsed: 'cic-v2',
+  });
+
+  // ── 1. Try JSON parse (primary path) ─────────────────────────────────────
+  try {
+    // Strip code fences (json fences) — using split/join to avoid backtick regex issues with old TS target
+    const fence = String.fromCharCode(96); // backtick
+    let clean = text.split(fence + fence + fence + 'json').join('').split(fence + fence + fence).join('').trim();
+    // Strip JS comments the AI sometimes injects
+    clean = stripJsonComments(clean);
+    // Extract the first {...} block in case there's prose before/after
+    const jsonMatch = clean.match(/\{[\s\S]*\}/);
+    if (jsonMatch) clean = jsonMatch[0];
+
+    const parsed = JSON.parse(clean);
+
+    if (Array.isArray(parsed.replies) && parsed.replies.length > 0) {
+      return SAFE_RESULT(parsed.replies, parsed.analysis);
+    }
+    // AI sometimes wraps in { options: [...] } or { messages: [...] }
+    const arr = parsed.options || parsed.messages || parsed.results;
+    if (Array.isArray(arr) && arr.length > 0) {
+      return SAFE_RESULT(arr, parsed.analysis);
+    }
+  } catch { /* fall through to text parsers */ }
+
+  // ── 2. Alpha.date single-reply (category 2) ───────────────────────────────
   if (platform === 'alphadate' && scenario?.category === 2) {
     const cleaned = text.replace(/^(reply:|output:|response:)/i, '').trim();
-    return {
-      replies:   [{ tone: 'Reply', text: cleaned }],
-      modelUsed: 'cic-v2',
-    };
+    return SAFE_RESULT([{ tone: 'Reply', text: cleaned }]);
   }
 
+  // ── 3. Alpha.date multi-option (category 1) ───────────────────────────────
   if (platform === 'alphadate' && scenario?.category === 1) {
-    const options: Array<{tone: string, text: string}> = [];
-    const matches = text.matchAll(/\[Option\s*(\d+)\][:\s]*([\s\S]*?)(?=\[Option\s*\d+\]|$)/gi);
-    for (const m of matches) {
-      const t = m[2].trim();
-      if (t) options.push({ tone: 'Option ' + m[1], text: t });
+    const options: Array<{tone:string;text:string}> = [];
+    // Split on Option markers, extract text between them
+    const parts3 = text.split(/\[Option\s*\d+\]|Option\s*\d+[:.]/i).slice(1);
+    for (const p of parts3) {
+      const t = p.trim();
+      if (t.length > 5) options.push({ tone: 'Option ' + (options.length + 1), text: t });
     }
-    if (options.length > 0) return { replies: options, modelUsed: 'cic-v2' };
+    if (options.length > 0) return SAFE_RESULT(options);
   }
 
-  const chunks  = text.split(/\n{2,}/).map(c => c.trim()).filter(Boolean);
-  const replies = chunks.slice(0, 4).map((c, i) => ({
-    tone: ['Warm', 'Flirty', 'Naughty', 'Playful'][i] || 'Reply ' + (i + 1),
-    text: c,
-  }));
+  // ── 4. Numbered list fallback ─────────────────────────────────────────────
+  const numberedLines = text.split('\n').map(l => l.trim());
+  const numbered: string[] = [];
+  for (const line of numberedLines) {
+    const m = line.match(/^\d+\.\s+(.+)/);
+    if (m && m[1].trim().length > 5) numbered.push(m[1].trim());
+  }
+  if (numbered.length >= 2) {
+    const TONES4 = ['Warm', 'Flirty', 'Naughty', 'Playful'];
+    return SAFE_RESULT(numbered.slice(0,4).map((t, i) => ({ tone: TONES4[i] || ('Reply ' + (i + 1)), text: t })));
+  }
 
-  return {
-    replies:   replies.length > 0 ? replies : [{ tone: 'Reply', text: text.trim() }],
-    modelUsed: 'cic-v2',
-  };
+  // ── 5. Tone-label text fallback ───────────────────────────────────────────
+  const labelled = Array.from(text.matchAll(/\*?\*?(Warm|Flirty|Sensual|Naughty|Playful|Romantic|Direct|Spicy)\*?\*?[:\-]\s*([\s\S]*?)(?=\*?\*?(?:Warm|Flirty|Sensual|Naughty|Playful|Romantic|Direct|Spicy)\*?\*?[:\-]|$)/gi));
+  if (labelled.length >= 2) {
+    return SAFE_RESULT(labelled.map(m => ({ tone: m[1], text: m[2].trim() })));
+  }
+
+  // ── 6. Paragraph split (last resort) ─────────────────────────────────────
+  const chunks = text.split(/\n{2,}/).map(c => c.trim()).filter(c => c.length > 10);
+  const TONES6 = ['Warm', 'Flirty', 'Naughty', 'Playful'];
+  if (chunks.length >= 2) {
+    return SAFE_RESULT(chunks.slice(0, 4).map((c, i) => ({ tone: TONES6[i] || ('Reply ' + (i + 1)), text: c })));
+  }
+
+  // ── 7. Absolute last resort — return the whole text as one reply ──────────
+  return SAFE_RESULT([{ tone: 'Reply', text: text.trim() }]);
 }
