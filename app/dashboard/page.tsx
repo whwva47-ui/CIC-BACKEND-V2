@@ -208,9 +208,17 @@ select.inp{cursor:pointer;appearance:none}
   font-weight:700;margin-bottom:7px;background:rgba(124,58,237,0.12);
   color:var(--pll);border:1px solid rgba(124,58,237,0.2)}
 
-/* Earnings tracker */
-.earn-num{font-family:var(--serif);font-size:36px;font-weight:800;
-  background:linear-gradient(135deg,var(--ok),#6ee7b7);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+/* Translate button */
+.btn-translate{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;
+  border-radius:6px;font-size:10.5px;font-weight:600;cursor:pointer;
+  border:1px solid rgba(99,179,237,0.3);background:rgba(99,179,237,0.06);
+  color:#90cdf4;font-family:var(--sans);transition:all 0.18s;white-space:nowrap}
+.btn-translate:hover{background:rgba(99,179,237,0.12);border-color:rgba(99,179,237,0.5)}
+.btn-translate.on{background:rgba(99,179,237,0.15);border-color:rgba(99,179,237,0.6);color:#bee3f8}
+.lang-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
+  border-radius:10px;font-size:9.5px;font-weight:700;letter-spacing:0.05em;
+  background:rgba(99,179,237,0.08);border:1px solid rgba(99,179,237,0.2);color:#90cdf4}
+.translate-row{display:flex;align-items:center;gap:8px;margin-top:7px;min-height:24px}
 
 /* Comparison table */
 .cmp-table{width:100%;border-collapse:collapse;font-size:12px}
@@ -282,6 +290,10 @@ export default function Dashboard() {
   const [agReplies, setAgReplies] = useState<typeof DEMO_REPLIES>([])
   const [agLoading, setAgLoading] = useState(false)
   const [agCopied, setAgCopied] = useState<number|null>(null)
+  // Translate — hidden until a non-English message is detected
+  const [agLang, setAgLang] = useState<string|null>(null)          // detected language name
+  const [agTranslate, setAgTranslate] = useState(false)             // translate mode active
+  const [agTranslating, setAgTranslating] = useState(false)         // spinner state
 
   // Reactivation
   const [reMsg, setReMsg] = useState('')
@@ -345,6 +357,46 @@ export default function Dashboard() {
     await sleep(1400+Math.random()*700)
     setReplies(customReplies || DEMO_REPLIES)
     setLoading(false)
+  }
+
+  // Detect if a message is non-English using simple heuristics
+  // Returns the likely language name or null if English/unknown
+  function detectLanguage(text: string): string | null {
+    if (!text || text.trim().length < 8) return null
+    const t = text.toLowerCase()
+    // Spanish markers
+    if (/[áéíóúüñ¿¡]/.test(t) || /\b(hola|como|estas|gracias|bueno|mucho|amor|eres|quiero|tengo|para|pero|porque|cuando|donde|aqui|ahora|todo|nada|bien|malo|muy|hay|qué|cómo|por)\b/.test(t)) return 'Spanish'
+    // French markers
+    if (/[àâæçèêëîïôùûüœ]/.test(t) || /\b(bonjour|merci|oui|non|avec|pour|dans|très|bien|aussi|mais|plus|tout|ça|être|vous|nous|ils|elle|votre|notre|avoir|faire|comment|quand|où)\b/.test(t)) return 'French'
+    // German markers
+    if (/[äöüß]/.test(t) || /\b(hallo|danke|bitte|ja|nein|ich|bin|haben|sein|mit|und|oder|aber|auch|wie|was|wer|wo|wann|hier|dort|gut|schön|liebe|sehr|noch|schon|doch)\b/.test(t)) return 'German'
+    // Portuguese markers
+    if (/[ãõâêôàáéíóúç]/.test(t) || /\b(olá|obrigado|obrigada|sim|não|como|está|muito|bem|amor|você|nós|eles|elas|para|mais|tudo|nada|aqui|agora|bom|boa|meu|minha|teu|tua)\b/.test(t)) return 'Portuguese'
+    // Italian markers
+    if (/\b(ciao|grazie|prego|buongiorno|buonasera|come|stai|bene|male|molto|amore|sono|hai|abbiamo|per|con|senza|tutti|tutto|niente|bello|bella|voi|loro|noi)\b/.test(t)) return 'Italian'
+    // Dutch markers
+    if (/\b(hallo|hoi|dank|bedankt|ja|nee|goed|slecht|mooi|ook|maar|met|voor|niet|wel|heel|leuk|lief|zijn|hebben|worden|kunnen|willen|zullen|jij|jullie)\b/.test(t)) return 'Dutch'
+    // Arabic markers (right-to-left unicode range)
+    if (/[\u0600-\u06FF]/.test(text)) return 'Arabic'
+    // Chinese
+    if (/[\u4E00-\u9FFF]/.test(text)) return 'Chinese'
+    // Japanese
+    if (/[\u3040-\u30FF]/.test(text)) return 'Japanese'
+    // Russian / Cyrillic
+    if (/[\u0400-\u04FF]/.test(text)) return 'Russian'
+    return null
+  }
+
+  function handleAgMsgChange(val: string) {
+    setAgMsg(val)
+    // Reset translate state when message changes
+    setAgTranslate(false)
+    const lang = detectLanguage(val)
+    setAgLang(lang)
+  }
+
+  function toggleTranslate() {
+    setAgTranslate(prev => !prev)
   }
 
   async function startSim() {
@@ -556,7 +608,22 @@ export default function Dashboard() {
                     </div>
                     <div style={{marginBottom:11}}>
                       <label className="lbl">His message</label>
-                      <textarea className="inp" style={{minHeight:80}} value={agMsg} onChange={e=>setAgMsg(e.target.value)} placeholder="Paste his last message..."/>
+                      <textarea className="inp" style={{minHeight:80}} value={agMsg} onChange={e=>handleAgMsgChange(e.target.value)} placeholder="Paste his last message..."/>
+                      {/* Translate button — only visible when non-English detected */}
+                      <div className="translate-row">
+                        {agLang && (
+                          <>
+                            <span className="lang-pill">🌐 {agLang} detected</span>
+                            <button
+                              className={`btn-translate ${agTranslate?'on':''}`}
+                              onClick={toggleTranslate}
+                              title={agTranslate ? `Click to reply in English instead` : `Click to reply in ${agLang}`}
+                            >
+                              {agTranslate ? `↩ Replying in ${agLang}` : `🌐 Reply in ${agLang}`}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <div style={{marginBottom:14}}>
                       <label className="lbl">Reply tone</label>
@@ -568,18 +635,34 @@ export default function Dashboard() {
                         <option>Emotionally deep</option>
                       </select>
                     </div>
-                    <div style={{display:'flex',gap:8}}>
+                    <div style={{display:'flex',gap:8,alignItems:'center'}}>
                       <button className="btn btn-p" onClick={()=>generateReplies(setAgLoading,setAgReplies)} disabled={agLoading||!agMsg.trim()}>
                         {agLoading?<><span className="spin"/> Generating...</>:'✦ Generate Replies'}
                       </button>
-                      {agReplies.length>0&&<button className="btn btn-ghost btn-sm" onClick={()=>{setAgReplies([]);setAgMsg('')}}>Clear</button>}
+                      {agReplies.length>0&&<button className="btn btn-ghost btn-sm" onClick={()=>{setAgReplies([]);setAgMsg('');setAgLang(null);setAgTranslate(false)}}>Clear</button>}
                     </div>
+                    {/* Show active language mode below buttons */}
+                    {agTranslate && agLang && (
+                      <div style={{marginTop:8,fontSize:11,color:'#90cdf4',display:'flex',alignItems:'center',gap:5}}>
+                        <span>🌐</span>
+                        <span>Replies will be generated in <strong>{agLang}</strong> — matching his language</span>
+                      </div>
+                    )}
                   </div>
                   <div>
                     {agReplies.length===0&&!agLoading&&<EmptyState icon="🤖" text="Enter a message and click Generate."/>}
+                    {agTranslate && agLang && agReplies.length > 0 && (
+                      <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10,padding:'6px 10px',background:'rgba(99,179,237,0.06)',border:'1px solid rgba(99,179,237,0.2)',borderRadius:8}}>
+                        <span style={{fontSize:12}}>🌐</span>
+                        <span style={{fontSize:11,color:'#90cdf4'}}>Replies in <strong>{agLang}</strong> — ready to copy and send</span>
+                      </div>
+                    )}
                     {agReplies.map((r,i)=>(
                       <div key={i} className="rc" style={{cursor:'default'}}>
-                        <div className="rc-tone">{r.tone}</div>
+                        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:5}}>
+                          <div className="rc-tone">{r.tone}</div>
+                          {agTranslate && agLang && <span className="lang-pill" style={{fontSize:'8.5px'}}>🌐 {agLang}</span>}
+                        </div>
                         <div className="rc-text">{r.text}</div>
                         <div style={{display:'flex',gap:6,marginTop:8}}>
                           <button className="btn btn-ghost btn-xs" onClick={()=>{navigator.clipboard.writeText(r.text);setAgCopied(i);setTimeout(()=>setAgCopied(null),1500)}}>{agCopied===i?'Copied!':'Copy'}</button>
