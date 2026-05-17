@@ -254,11 +254,22 @@ CAT (Conversion Action Trigger) RULES — TARGET 99% REPLY RATE:
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     console.error('[generate] AI error:', errMsg);
-    if (errMsg.includes('API keys')) {
-      return NextResponse.json({ error: 'AI service unavailable. Contact admin.' }, { status: 500, headers: h });
+
+    // Missing API keys — most common cause of 500 on wrong deployment
+    if (errMsg.includes('API keys') || errMsg.includes('All AI providers failed')) {
+      const hasGroq   = !!process.env.GROQ_API_KEY;
+      const hasGoogle = !!process.env.GOOGLE_AI_API_KEY;
+      console.error('[generate] Key status — GROQ:', hasGroq, 'Google:', hasGoogle);
+      return NextResponse.json(
+        { error: 'AI service unavailable. If this persists, your extension may be pointing to the wrong server. Contact admin.' },
+        { status: 500, headers: h }
+      );
     }
     if (errMsg.includes('401') || errMsg.includes('auth')) {
       return NextResponse.json({ error: 'AI authentication failed. Contact admin.' }, { status: 500, headers: h });
+    }
+    if (errMsg.includes('timeout') || errMsg.includes('abort')) {
+      return NextResponse.json({ error: 'Generation timed out. Try again in a moment.' }, { status: 503, headers: h });
     }
     return NextResponse.json({ error: 'Generation failed. Please try again in a moment.' }, { status: 500, headers: h });
   }
