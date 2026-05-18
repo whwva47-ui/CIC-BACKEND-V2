@@ -4,13 +4,13 @@ import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
 
-const AUTH = ['https://chattersinnercircle.vercel.app','https://chattersinnercircle.vercel.app','chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp','http://localhost:3000'];
-function cors(o: string|null) { const r = o && AUTH.includes(o) ? o : AUTH[0]; return { 'Access-Control-Allow-Origin': r, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' }; }
+const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-User-Email, X-Session-Token' };
+function cors() { return CORS_HEADERS; }
 
-export async function OPTIONS(req: NextRequest) { return new NextResponse(null, { status: 204, headers: cors(req.headers.get('origin')) }); }
+export async function OPTIONS(req: NextRequest) { return new NextResponse(null, { status: 204, headers: cors() }); }
 
 export async function POST(req: NextRequest) {
-  const h = cors(req.headers.get('origin'));
+  const h = cors();
   let token = '';
   try { const b = await req.json(); token = (b.token || '').trim(); }
   catch { return NextResponse.json({ error: 'Invalid request.' }, { status: 400, headers: h }); }

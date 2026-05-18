@@ -3,15 +3,15 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-const PLATFORM = ['chrome-extension://dkgpheiimhedhdfandcgeogmbfmmiobp','https://chattersinnercircle.vercel.app','https://chattersinnercircle.vercel.app','https://chathomebase.com','https://www.chathomebase.com','https://alpha.date','https://www.alpha.date','https://onlyfans.com','https://fansly.com','https://loyalfans.com','https://fancentro.com','https://admireme.vip','https://fanvue.com','https://www.manyvids.com','https://unlockd.com','http://localhost:3000'];
-function cors(o: string|null) { const r = o && PLATFORM.includes(o) ? o : PLATFORM[1]; return { 'Access-Control-Allow-Origin': r, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-User-Email' }; }
+const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-User-Email, X-Session-Token' };
+function cors() { return CORS_HEADERS; }
 
 const LABELS: Record<string,string> = { mpesa: 'M-Pesa', card: 'Card', paypal: 'PayPal', crypto: 'Crypto' };
 
-export async function OPTIONS(req: NextRequest) { return new NextResponse(null, { status: 204, headers: cors(req.headers.get('origin')) }); }
+export async function OPTIONS(req: NextRequest) { return new NextResponse(null, { status: 204, headers: cors() }); }
 
 export async function POST(req: NextRequest) {
-  const h = cors(req.headers.get('origin'));
+  const h = cors();
   let email = '', paymentMethod = '', requestType = 'upgrade';
   try { const b = await req.json(); email = (b.email || req.headers.get('X-User-Email') || '').trim().toLowerCase(); paymentMethod = (b.paymentMethod || '').trim().toLowerCase(); requestType = (b.requestType || 'upgrade').trim().toLowerCase(); }
   catch { return NextResponse.json({ error: 'Invalid request.' }, { status: 400, headers: h }); }

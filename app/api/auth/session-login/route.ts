@@ -4,27 +4,15 @@ import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
 
-const AUTH = [
-  'chrome-extension://kdmffkblhinlggeopcglmhoolgmmfdaj',
-  'https://chattersinnercircle.vercel.app',
-  'http://localhost:3000'
-];
-
-function cors(o: string | null) {
-  const origin = o && AUTH.includes(o) ? o : null;
-  return {
-    'Access-Control-Allow-Origin': origin ?? '',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
-  };
-}
+const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-User-Email, X-Session-Token' };
+function cors() { return CORS_HEADERS; }
 
 export async function OPTIONS(req: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: cors(req.headers.get('origin')) });
+  return new NextResponse(null, { status: 204, headers: cors() });
 }
 
 export async function POST(req: NextRequest) {
-  const h = cors(req.headers.get('origin'));
+  const h = cors();
   let email = '';
 
   try {
