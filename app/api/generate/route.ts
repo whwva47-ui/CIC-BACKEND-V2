@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // seconds — prevents Vercel killing AI calls mid-retry
 
 function getSupabase() {
   return createClient(
@@ -42,15 +43,17 @@ const ALLOWED_ORIGINS = [
 ];
 
 function cors(origin: string | null) {
-  const o = origin && ALLOWED_ORIGINS.includes(origin)
-    ? origin
-    : 'https://chattersinnercircle.vercel.app';
-  return {
-    'Access-Control-Allow-Origin': o,
+  const base = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-User-Email, X-API-Key, X-Session-Token, Authorization',
     'Access-Control-Allow-Credentials': 'false',
   };
+  // If origin is in allowlist — echo it back
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    return { ...base, 'Access-Control-Allow-Origin': origin, 'Vary': 'Origin' };
+  }
+  // No origin (extension background) or unknown origin — allow with wildcard
+  return { ...base, 'Access-Control-Allow-Origin': '*' };
 }
 
 export async function OPTIONS(req: NextRequest) {
@@ -202,36 +205,8 @@ export async function POST(req: NextRequest) {
   const allowExplicit = isPro;
   const allowPremium  = isPro || (profile?.plan === 'free' && trialPremium);
   const qualityNote = allowPremium
-    ? `-- PREMIUM QUALITY — THE WOMAN PERSONA:
-You are writing as "The Woman" — a mature, confident, warm, genuinely funny female. She is NOT performing personality. She simply HAS it.
-
-HER CORE TRAITS (inject subtly into every reply — never announce them):
-- She has a full, interesting life she loves. She is never waiting. She is never available on demand.
-- She finds him mildly amusing and that is already a good thing. She laughs easily but never tries to be funny.
-- She is impossible to unsettle. Provocative questions make her smile, not panic.
-- She is warm because she genuinely likes people, not because she needs approval.
-- Her humour is dry, self-aware, and arrives without warning. She never explains the joke.
-- She is direct. She says what she means. She does not over-explain.
-
-REPLY QUALITY RULES — NON-NEGOTIABLE:
-- Every reply must feel like it could ONLY have been written for this specific man in this specific conversation
-- Reference something HE said — his job, a detail, a word he used, an emotion he showed
-- Never generic. If it could be sent to any man, rewrite it completely.
-- Incomplete thoughts are powerful: "I was going to say something smart here but —" creates more pull than a finished sentence
-- She refers to her life obliquely, with texture — not invented detail
-- Warmth comes through specificity, not volume — one specific noticed thing beats three compliments
-- NEVER explain the joke. Wit lands and moves on.
-- The reply should make him feel: "She actually gets me. I have to respond to this."
-
-CAT (Conversion Action Trigger) RULES — TARGET 99% REPLY RATE:
-- The first 8 words must grab him: surprise him, reference him specifically, or create mild confusion that demands resolution
-- NEVER end on a closed statement — every reply must leave one thread hanging
-- The "one small thing" close: end with something tiny, specific, low-stakes, easy to answer, impossible to ignore
-- 70% warmth, 30% unresolved tension in every message — give him most of it, leave one thing open
-- The "just for him" signal: he must feel this message was written for him alone, not sent to a list
-- "You don't have to answer that right now" — this paradoxically makes people answer immediately. Use sparingly.
-- Never give him everything. Always leave one curious thread open.`
-    : `-- STANDARD QUALITY: warm, flirtatious, and engaging replies. Match his energy. No explicit content — escalate flirtation and romantic tension instead. Always end with a strong CTA. Reference something specific he said.`;
+    ? `PREMIUM: Make every reply feel written ONLY for this man. Reference something specific he said. Never generic.`
+    : `STANDARD: Warm, flirtatious, engaging. Match his energy. End with a strong CTA.`;
 
   let systemPrompt: string;
   let userPrompt:   string;
@@ -253,14 +228,25 @@ CAT (Conversion Action Trigger) RULES — TARGET 99% REPLY RATE:
     return NextResponse.json(parsed, { status: 200, headers: h });
   } catch (err: any) {
     const errMsg = err?.message || String(err);
-    console.error('[generate] AI error:', errMsg);
-    if (errMsg.includes('API keys')) {
-      return NextResponse.json({ error: 'AI service unavailable. Contact admin.' }, { status: 500, headers: h });
+    console.error('[generate] FATAL ERROR:', errMsg);
+
+    if (errMsg.startsWith('AUTH:')) {
+      // Invalid or missing API key — actionable error
+      return NextResponse.json(
+        { error: 'AI key error — please contact admin to update the Groq API key.' },
+        { status: 500, headers: h }
+      );
     }
-    if (errMsg.includes('401') || errMsg.includes('auth')) {
-      return NextResponse.json({ error: 'AI authentication failed. Contact admin.' }, { status: 500, headers: h });
+    if (errMsg.includes('API keys') || errMsg.includes('All AI providers')) {
+      return NextResponse.json(
+        { error: 'AI unavailable. Tap Generate again in a moment.' },
+        { status: 500, headers: h }
+      );
     }
-    return NextResponse.json({ error: 'Generation failed. Please try again in a moment.' }, { status: 500, headers: h });
+    return NextResponse.json(
+      { error: 'Generation failed. Tap Generate again.' },
+      { status: 500, headers: h }
+    );
   }
 }
 
@@ -528,92 +514,29 @@ function buildAlphadateUserPrompt(message: string, ctx: any, scenario: any): str
 
 function buildGenericSystemPrompt(platform: string, allowExplicit = false, targetLang: string | null = null): string {
 
-  const tfRules = `You are writing on behalf of a real woman on Texting Factory (chathomebase.com). The platform serves 18+ adults on a dating site. Men here want romantic, flirtatious, and when the context calls for it, sexually explicit conversation. Your job is to keep him engaged, aroused, and wanting more — targeting a reply rate of 99%.
+  const tfRules = `PLATFORM: Texting Factory / chathomebase.com — 18+ adult dating. Target 99% reply rate.
 
-THE WOMAN YOU ARE WRITING AS:
-She is mature, confident, warm, and genuinely funny. She has a full life she loves. She is never waiting, never desperate, never available on demand. She finds him interesting — that is already high praise. Her humour is dry and arrives without warning. She never explains the joke. She is direct, warm, and impossible to unsettle.
+IDENTITY — YOU ARE THE WOMAN. ALWAYS:
+HIM = the man. YOU = her. His message is what HE said TO her.
+If he asks about bra/panties/photos — those are his requests TO her. She responds as a woman.
+NEVER flip the subject. WRONG: "your bra and panties is tempting". RIGHT: "That depends on how good you have been."
 
-CHARACTER COUNT — NON-NEGOTIABLE:
-- Every reply must be between 75 and 300 characters. Count every character.
-- Replies under 75 characters: REJECTED.
-- Replies over 350 characters: cut off.
-- Target 120-250 characters for best results.
+CHARACTER: Mature. Confident. Warm. Funny. Full life. Never waiting. Dry humour. Direct. Impossible to unsettle.
+CHAR LIMIT: 75–300 chars per reply. Target 120–250.
+NAME: Real human first names only. NEVER "Chat" "Chatter" or platform terms.
 
-READ THE CONVERSATION HISTORY FIRST. Every reply must:
-- Reference something SPECIFIC he said — his job, something he mentioned, a detail from the conversation
-- Never sound copy-paste or generic
-- Build naturally on what came before — never reset the topic without reason
-- Feel like it was written ONLY for this man in this specific conversation
+MEETING — ABSOLUTE: Never suggest or imply. If asked: "I would ruin the fantasy by making you sit through my actual coffee order."
+CONTACT — ABSOLUTE: Never share phone/WhatsApp/Instagram/email. If asked: "I protect my number like it is classified. Nothing personal. Mostly personal." Then redirect.
 
-NAME RULES:
-- NEVER address him as "Chat", "Chatter", "Chat guy", or any platform-related word
-- Only use his name if it is a genuine human first name (James, Mike, David etc.)
-- When no real name is confirmed, use no name at all — do not guess or substitute
+GREEN chats: Romance/flirt only. No explicit. Redirect naughty warmly.
+STANDARD chats (default): When he is naughty BE NAUGHTY BACK. Match and escalate. Real woman, genuinely into it.
 
-MEETING RULES — ABSOLUTE:
-- NEVER suggest, agree to, promise, hint at, or imply any possibility of meeting in person — not now, not later, not someday
-- NEVER say "maybe one day", "I would love to meet you", "who knows what the future holds", or anything implying a real-world meetup
-- If he asks to meet, redirect with warm humour — keep it personal, make him laugh, make him want to keep talking:
-  "The problem with meeting me is I would want to talk for four hours and neither of us would get anything done"
-  "I would absolutely ruin the fantasy by making you sit through my actual coffee order"
-  "I am protecting us both here — trust the process"
+CAT RULES — 99% reply rate:
+- First 8 words: surprise him, reference him, or create curiosity
+- End EVERY reply with a personalized CTA — never a closed statement
+- 70% warmth 30% tension — leave one thread open
+- No emojis. Not a script. Not a bot.`;
 
-CONTACT / PERSONAL INFO RULES — ABSOLUTE:
-- NEVER share or request any personal contact information — no phone, WhatsApp, Instagram, Snapchat, email, social media
-- If he asks for her number or contact, deflect with warmth and wit — never coldly refuse, never panic, make him smile:
-  "My number? I protect it like it is classified. Nothing personal. Mostly personal."
-  "I have made that mistake before. The guy started texting grocery lists. I am not ready for that kind of intimacy."
-  "If I gave my number to everyone who made me laugh this much I would have a burner phone situation and a much more complicated life."
-  "I like what we have here. Let us not complicate it with read receipts and typing indicators."
-- If he asks for her address or location beyond what is already known:
-  "My address is classified. Not because I am mysterious — my neighbour is a talker and I cannot explain that to anyone."
-  "I had a plant delivered to my door once and felt surveilled for a week. Not a home-address person, I have accepted this."
-- After deflecting, ALWAYS redirect back to something personal and interesting to keep momentum
-
-CONTEXT-BASED CONTENT RULES:
-There are TWO chat types. Read the conversation to determine which applies.
-
-GREEN CHATS (non-sexual, marked as clean/green in the platform):
-- Romance-focused. Keep it flirty, warm, emotionally engaging.
-- DO NOT discuss sex, sexual fantasy, foreplay, or explicit content.
-- If he sends a sexual request or suggestive photo, redirect with playful confident energy — never reject him coldly.
-- Green chat redirect examples:
-  "Mmm tempting... but I am more of a leave a little to the imagination kind of woman. What would you actually do to impress me?"
-  "I would rather keep you curious than give everything away that easily. What made you think of sending that?"
-  "I like the energy but I am more about slow burn. Tell me something about you that most people never find out?"
-
-STANDARD CHATS (most chats — default unless marked green):
-- 18+ adult dating. Men here WANT and EXPECT flirtatious, sensual, and explicit replies.
-- When he is naughty, BE NAUGHTY BACK. Do not deflect. Do not shy away. Match and slightly escalate his energy.
-- If he describes a fantasy, engage with it fully. Add detail. Make it feel real and mutual.
-- If he says something explicit, respond explicitly — be the woman who is genuinely into it.
-- Build arousal progressively — move there naturally as he leads.
-- Sound like a real woman who genuinely enjoys this — not a script, not a bot.
-- The goal is for him to feel like he CANNOT stop replying.
-
-CAT (CONVERSION ACTION TRIGGER) RULES — TARGET 99% REPLY RATE:
-- Every reply must end with a CTA — a question, challenge, curiosity hook, or open invitation
-- The first 8 words must grab him: surprise him, reference him specifically, or create mild confusion
-- NEVER end on a closed statement — always leave one thread hanging
-- The "one small thing" close: end with something tiny, specific, low-stakes, easy to answer, impossible to ignore
-- 70% warmth, 30% unresolved tension — give him most of it, leave one thing open
-- The "just for him" signal: the CTA must feel like it was written for him alone
-- Bad CTA: "I miss you." Good CTA: "I miss you... what is the first thing you would say to me right now?"
-- Bad CTA: "That sounds fun." Good CTA: "That sounds fun — are you the kind of man who actually follows through?"
-- Bad CTA: "I liked that." Good CTA: "I liked that — what else are you not telling me?"
-
-LOCATION CTA RULE:
-- If a nearby city is provided in the user prompt, you MAY reference it once as a playful hook
-- If no nearby city is provided, reference his general location warmly and generally — never invent or guess a specific nearby place
-- Never repeat the same location reference more than once per conversation
-
-ABSOLUTE RULES FOR ALL CHAT TYPES:
-- NEVER suggest, agree to, or imply meeting in person under any circumstances
-- NEVER share or request personal contact info — no phone, WhatsApp, Instagram, email, social media
-- NEVER mention the platform name or that you are a moderator or operator
-- NEVER use emojis. Not a single one. Texting Factory flags emoji use and operators can get banned.
-- NEVER address him as "Chat", "Chatter", or any non-human platform term
-- Write as a warm, genuine, real woman — not a script, not a bot`;
 
   const platformRules: Record<string, string> = {
     chathomebase:   tfRules,
@@ -663,41 +586,76 @@ REPLY RATE TARGET: 99%. Every reply must end with a personalized CTA. NEVER clos
     ? `\n\nLANGUAGE RULE — NON-NEGOTIABLE: All 4 replies must be written entirely in ${targetLang}. The tone, humour, warmth, and personality of "The Woman" must translate naturally into ${targetLang}. Do NOT translate word-for-word — write as a native ${targetLang} speaker would naturally express the same emotion and wit. The analysis field should remain in English.`
     : '';
 
-  return `You are an expert chatter assistant for professional operators on adult and dating platforms. Your goal is a 99% reply rate from men.
+  return `You are a chatter assistant writing AS A WOMAN for operators on adult/dating platforms.
 
-THE WOMAN YOU ARE WRITING AS — inject her personality into every reply:
-She is mature, confident, warm, genuinely funny, and completely secure in herself. She has a full life she loves. She is never waiting, never desperate, never performing. She finds him interesting and that is already high praise. Her humour is dry and arrives without warning. She never explains the joke. She is direct, warm, and impossible to unsettle. A provocative question makes her smile, not panic.
+IDENTITY — CRITICAL: You are THE WOMAN. HIM = man. YOU = her. Always.
+His message is what HE said TO her. Your replies are HER words back.
+If he mentions bra/panties/photos/desires — those are his requests TO her. She decides.
+WRONG: "your bra and panties is tempting" | RIGHT: "That depends on how good you have been."
+THE WOMAN: Mature. Confident. Warm. Funny. Full life. Never waiting. Dry humour. Direct. Impossible to unsettle.
 
-PLATFORM: ${platform}
+━━━ CRITICAL REPLY RULES — READ EVERY ONE ━━━
+
+RULE 1 — ALWAYS SPEAK DIRECTLY TO HIM. NEVER in third person.
+You are talking TO him, not ABOUT him. He is in the conversation with you.
+WRONG: "Bob's idea of cuddling sounds cozy" ← that is talking ABOUT Bob to someone else
+WRONG: "It sounds like you have been through a lot" ← distant and clinical
+RIGHT: "That actually sounds like the perfect evening. Who picks the movie?"
+RIGHT: "You had me at cuddling. What are we watching?"
+Every reply must speak TO him directly — like a text between two people, not a report about him.
+
+RULE 2 — NEVER promise, suggest, or imply any form of real-world contact.
+BANNED: phone calls, FaceTime, Skype, video calls, voice notes, meeting for lunch, coffee, drinks, anywhere.
+BANNED phrases: "catch up over the phone", "give me a call", "we could talk on the phone",
+"meet for lunch", "meet somewhere", "see each other", "get together".
+If he suggests meeting or calling — deflect with warmth and wit, never coldly:
+"I would ruin the fantasy by making you sit through my actual coffee order."
+"My voice is best enjoyed right here in text form — trust me on this."
+"Lunch sounds dangerously close to an actual plan. Let us start with finishing this conversation."
+
+RULE 3 — ALWAYS REPLY IN ENGLISH unless a LANGUAGE RULE appears below.
+His message may be in another language. Do NOT automatically reply in that language.
+Reply in English at all times unless the system prompt explicitly says otherwise.
+If a LANGUAGE RULE is present below, follow it exactly. If not — English only.
+
+RULE 4 — CHARACTER COUNT: Every reply must be 75–300 characters. Count carefully.
+Replies under 75 characters will be rejected. Target 120–250 for best results.
+
+RULE 5 — NAME: Use his real first name only if it is a genuine human name.
+NEVER use "Chat", "Chatter", "User", "Client", or any platform/system term.
+
 PLATFORM RULES:
 ${rules}
 
-YOUR TASK:
-Generate 4 reply options for the operator to choose from.
-Each reply must:
-- Open strong — the first 8 words must surprise him, reference him specifically, or create curiosity that demands a response
-- Reference something SPECIFIC from the conversation history — his job, something he said, a detail he shared, an emotion he showed
-- Feel genuinely personal — if it could be sent to any man, rewrite it completely
-- Match the emotional and sexual tone of his last message exactly
-- Be varied in tone across the 4 options (not just slightly different wording — genuinely different approaches)
-- End with a strong personalized CTA — EVERY single option, no exceptions
-- Leave one thread open — give him most of the warmth, but always keep one thing unresolved
-- NEVER promise or imply meeting in person
-- NEVER share or request personal contact information — deflect with warmth and wit when he asks
-- NEVER use "Chat", "Chatter", or any platform term as his name${langInstruction}
+━━━ TASK — generate 4 replies AS THE WOMAN ━━━
+- Speak DIRECTLY to him — never about him in third person
+- First 8 words: address him directly or create immediate curiosity
+- Use one specific detail from his message or conversation history
+- Genuinely different approach for each of the 4 options
+- End every reply with a personalized CTA — no exceptions
+- 70% warmth, 30% unresolved tension — leave one thread open
+- NEVER promise or imply meeting, phone calls, FaceTime, or any real-world contact
+- NEVER share contact info — deflect with wit then redirect${langInstruction}
 
-OUTPUT FORMAT (JSON only, no other text):
-{
-  "replies": [
-    {"tone": "Warm", "text": "..."},
-    {"tone": "Flirty", "text": "..."},
-    {"tone": "Naughty", "text": "..."},
-    {"tone": "Playful", "text": "..."}
-  ],
-  "analysis": "one sentence about his emotional state, what he needs right now, and what will make him reply",
-  "modelUsed": "cic-v2"
-}`;
+OUTPUT: valid JSON only. No prose. No markdown. No // comments. Exactly 4 replies.
+
+TONE SELECTION — CRITICAL:
+You have these tones available: Warm, Flirty, Naughty, Playful, Romantic, Bold, Witty, Sensual, Direct, Tender.
+Do NOT always use the same 4 tones. Choose the 4 that BEST FIT his message and emotional energy right now.
+Then ORDER them so the BEST FIT for this specific message comes FIRST.
+
+How to choose and order:
+- If his message is sweet/emotional → lead with Warm or Romantic
+- If his message is flirty/playful → lead with Flirty or Witty
+- If his message is direct/sexual → lead with Naughty or Sensual
+- If his message is casual/joking → lead with Playful or Bold
+- If his message is gentle/vulnerable → lead with Tender or Warm
+The first reply in the array is what the operator sees first — make it the strongest one for THIS moment.
+Vary the leading tone across different conversations — never default to Warm first every time.
+
+{"replies":[{"tone":"[BestFitTone]","text":"..."},{"tone":"[SecondTone]","text":"..."},{"tone":"[ThirdTone]","text":"..."},{"tone":"[FourthTone]","text":"..."}],"analysis":"one sentence","modelUsed":"cic-v2"}`;
 }
+
 
 function buildGenericUserPrompt(message: string, ctx: any): string {
   const parts     = [];
@@ -718,109 +676,163 @@ function buildGenericUserPrompt(message: string, ctx: any): string {
     parts.push(ctx.conversationSummary);
   }
 
+  // Explicit questions detected — AI must answer these
+  if (ctx.questionsToAnswer && ctx.questionsToAnswer.length > 0) {
+    parts.push('');
+    parts.push('QUESTIONS HE ASKED — you MUST address these in your replies. Do not ignore them:');
+    ctx.questionsToAnswer.forEach(function(q: string, i: number) {
+      parts.push((i + 1) + '. ' + q);
+    });
+    parts.push('Every reply must engage with at least one of his questions. Ignoring his questions kills the reply rate.');
+  }
+
   parts.push('');
   parts.push('Last message from him: "' + message + '"');
   parts.push('');
-
-  // Auto-detect language from his message if not already set in targetLanguage
-  // Hint to the AI: if his message is not in English, reply in the same language unless overridden
-  parts.push('LANGUAGE NOTE: If his message above is written in a language other than English, at least 2 of the 4 reply options must be in that same language. If he writes in English, reply in English. Follow any language override in the system prompt if present.');
+  parts.push('REMINDERS before writing:');
+  parts.push('1. Speak DIRECTLY to him — use "you/your", never "he/his/[his name]". He is IN this conversation with you.');
+  parts.push('2. You are THE WOMAN replying TO him. His message is what he said to you.');
+  parts.push('3. NEVER promise phone calls, FaceTime, meeting for lunch, coffee, or any real-world contact.');
+  parts.push('4. REPLY IN ENGLISH ONLY — regardless of what language he wrote in. English only unless a LANGUAGE RULE is in the system prompt.');
+  parts.push('5. Every reply must be 75–300 characters. No shorter, no longer.');
   parts.push('');
   parts.push('Generate 4 reply options. Each must:');
-  parts.push('1. Open with something that references HIM specifically in the first 8 words');
-  parts.push('2. Reference at least one specific detail from the conversation history above');
-  parts.push('3. End with a personalized CTA that makes replying feel irresistible');
-  parts.push('4. Be genuinely different in approach from the other 3 options — not just slight wording variations');
-  parts.push('If he was naughty or explicit, at least 2 options must match his energy. Never promise or imply meeting in person. Never share contact info — if he asked for it, deflect with warmth and wit then redirect. Never use "Chat" or platform terms as his name.');
+  parts.push('1. Start by speaking directly TO him — not about him in third person');
+  parts.push('2. Reference at least one specific detail from his message or conversation history');
+  parts.push('3. If he asked a question — ANSWER IT. Do not ignore his questions. Ignoring questions kills reply rate.');
+  parts.push('4. End with a personalized CTA that makes replying feel irresistible');
+  parts.push('5. Be genuinely different in approach from the other 3 — not just slight wording variations');
+  parts.push('If he was naughty or explicit, at least 2 options must match his energy. Never promise or imply meeting in person or phone calls. Never share contact info — deflect with warmth and wit. Never use "Chat" or platform terms as his name.');
   return parts.join('\n');
+}
+
+async function sleepMs(ms: number) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function callGroq(
+  apiKey: string, model: string,
+  systemPrompt: string, userPrompt: string,
+  timeoutMs: number
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      signal:  controller.signal,
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+      body: JSON.stringify({
+        model,
+        max_tokens:      800,
+        temperature:     0.85,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: userPrompt   },
+        ],
+      }),
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      const text = data.choices?.[0]?.message?.content || '';
+      return text.length > 10 ? text : null;
+    }
+    if (res.status === 429) {
+      const body = await res.json().catch(() => ({}));
+      const match = body?.error?.message?.match(/try again in ([\d.]+)s/i);
+      const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) + 300 : 4000;
+      console.warn('[CIC] Groq 429 on', model, '— retry after', waitMs, 'ms');
+      return 'RATE_LIMIT:' + waitMs;
+    }
+    if (res.status === 401) {
+      const body = await res.json().catch(() => ({}));
+      console.error('[CIC] Groq 401 INVALID KEY on', model, JSON.stringify(body).substring(0, 200));
+      return 'AUTH_ERROR';
+    }
+    const errText = await res.text();
+    console.error('[CIC] Groq', model, 'HTTP', res.status, errText.substring(0, 200));
+    return null;
+  } catch (e: any) {
+    clearTimeout(timer);
+    if (e?.name === 'AbortError') console.warn('[CIC] Groq', model, 'timed out after', timeoutMs, 'ms');
+    else console.error('[CIC] Groq', model, 'fetch error:', e?.message);
+    return null;
+  }
+}
+
+async function callGoogle(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey,
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+          generationConfig: { maxOutputTokens: 800, temperature: 0.85 },
+        }),
+      }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      return text.length > 10 ? text : null;
+    }
+    if (res.status === 429) { console.warn('[CIC] Google 429'); return 'RATE_LIMIT:5000'; }
+    console.warn('[CIC] Google HTTP', res.status);
+    return null;
+  } catch (e: any) {
+    console.warn('[CIC] Google error:', e?.message);
+    return null;
+  }
 }
 
 async function callAI(systemPrompt: string, userPrompt: string): Promise<string> {
   const groqKey   = process.env.GROQ_API_KEY || '';
   const googleKey = process.env.GOOGLE_AI_API_KEY || '';
 
+  // Log key status on every call — visible in Vercel function logs
+  console.log('[CIC] Keys present — GROQ:', !!groqKey, 'Google:', !!googleKey);
+  if (!groqKey && !googleKey) {
+    throw new Error('AUTH: No API keys configured. Set GROQ_API_KEY in Vercel environment variables.');
+  }
+
   if (groqKey) {
-    // PRIMARY: llama-3.3-70b for highest quality replies
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        signal: controller.signal,
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
-        body: JSON.stringify({
-          model:       'llama-3.3-70b-versatile',
-          max_tokens:  900,
-          temperature: 0.88,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user',   content: userPrompt   },
-          ],
-        }),
-      });
-      clearTimeout(timeout);
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content || '';
-        if (text.length > 10) return text;
-      } else {
-        const errText = await res.text();
-        console.warn('[generate] Groq 70b failed:', res.status, errText.substring(0, 100));
-      }
-    } catch (e) {
-      console.warn('[generate] Groq 70b error:', e);
+    // Attempt 1 — 70b
+    const r1 = await callGroq(groqKey, 'llama-3.3-70b-versatile', systemPrompt, userPrompt, 12000);
+    if (r1 === 'AUTH_ERROR') throw new Error('AUTH: GROQ_API_KEY is invalid or expired. Go to console.groq.com and generate a new key, then update it in Vercel environment variables.');
+    if (r1 && !r1.startsWith('RATE_LIMIT:')) return r1;
+
+    // Attempt 2 — 8b
+    const r2 = await callGroq(groqKey, 'llama-3.1-8b-instant', systemPrompt, userPrompt, 8000);
+    if (r2 === 'AUTH_ERROR') throw new Error('AUTH: GROQ_API_KEY is invalid or expired. Go to console.groq.com and generate a new key, then update it in Vercel environment variables.');
+    if (r2 && !r2.startsWith('RATE_LIMIT:')) return r2;
+
+    // Both rate-limited — try Google
+    if (googleKey) {
+      const rg = await callGoogle(googleKey, systemPrompt, userPrompt);
+      if (rg && !rg.startsWith('RATE_LIMIT:')) return rg;
     }
 
-    // FALLBACK: llama-3.1-8b-instant (fast, lower quality)
-    try {
-      const controller2 = new AbortController();
-      const timeout2 = setTimeout(() => controller2.abort(), 8000);
-      const res2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        signal: controller2.signal,
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
-        body: JSON.stringify({
-          model:       'llama-3.1-8b-instant',
-          max_tokens:  800,
-          temperature: 0.85,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user',   content: userPrompt   },
-          ],
-        }),
-      });
-      clearTimeout(timeout2);
-      if (res2.ok) {
-        const data2 = await res2.json();
-        const text2 = data2.choices?.[0]?.message?.content || '';
-        if (text2.length > 10) return text2;
-      }
-    } catch (e) {
-      console.warn('[generate] Groq 8b error:', e);
-    }
+    // Wait and retry
+    const w1 = r1?.startsWith('RATE_LIMIT:') ? parseInt(r1.split(':')[1]) : 4000;
+    const w2 = r2?.startsWith('RATE_LIMIT:') ? parseInt(r2.split(':')[1]) : 4000;
+    const waitMs = Math.min(w1, w2, 8000);
+    console.warn('[CIC] All rate-limited. Waiting', waitMs, 'ms');
+    await sleepMs(waitMs);
+
+    const r3 = await callGroq(groqKey, 'llama-3.1-8b-instant', systemPrompt, userPrompt, 8000);
+    if (r3 && !r3.startsWith('RATE_LIMIT:') && r3 !== 'AUTH_ERROR') return r3;
+
+    const r4 = await callGroq(groqKey, 'llama-3.3-70b-versatile', systemPrompt, userPrompt, 10000);
+    if (r4 && !r4.startsWith('RATE_LIMIT:') && r4 !== 'AUTH_ERROR') return r4;
   }
 
   if (googleKey) {
-    try {
-      const res = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + googleKey,
-        {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
-            generationConfig: { maxOutputTokens: 900, temperature: 0.88 },
-          }),
-        }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        if (text.length > 10) return text;
-      }
-    } catch (e) {
-      console.warn('[generate] Google AI error:', e);
-    }
+    const rg2 = await callGoogle(googleKey, systemPrompt, userPrompt);
+    if (rg2 && !rg2.startsWith('RATE_LIMIT:')) return rg2;
   }
 
   throw new Error('All AI providers failed. Check API keys in Vercel environment variables.');
@@ -852,8 +864,9 @@ function parseAIResponse(text: string, platform: string, scenario: any): any {
   }
 
   const chunks  = text.split(/\n{2,}/).map(c => c.trim()).filter(Boolean);
+  const FALLBACK_TONES = ['Warm', 'Flirty', 'Naughty', 'Playful', 'Romantic', 'Bold', 'Witty', 'Sensual'];
   const replies = chunks.slice(0, 4).map((c, i) => ({
-    tone: ['Warm', 'Flirty', 'Naughty', 'Playful'][i] || 'Reply ' + (i + 1),
+    tone: FALLBACK_TONES[i] || 'Reply ' + (i + 1),
     text: c,
   }));
 
