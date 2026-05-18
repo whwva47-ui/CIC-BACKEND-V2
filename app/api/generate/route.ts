@@ -43,15 +43,17 @@ const ALLOWED_ORIGINS = [
 ];
 
 function cors(origin: string | null) {
-  const o = origin && ALLOWED_ORIGINS.includes(origin)
-    ? origin
-    : 'https://chattersinnercircle.vercel.app';
-  return {
-    'Access-Control-Allow-Origin': o,
+  const base = {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-User-Email, X-API-Key, X-Session-Token, Authorization',
     'Access-Control-Allow-Credentials': 'false',
   };
+  // If origin is in allowlist — echo it back
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    return { ...base, 'Access-Control-Allow-Origin': origin, 'Vary': 'Origin' };
+  }
+  // No origin (extension background) or unknown origin — allow with wildcard
+  return { ...base, 'Access-Control-Allow-Origin': '*' };
 }
 
 export async function OPTIONS(req: NextRequest) {
