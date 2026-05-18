@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // seconds — prevents Vercel killing AI calls mid-retry
 
 function getSupabase() {
   return createClient(
@@ -202,36 +203,8 @@ export async function POST(req: NextRequest) {
   const allowExplicit = isPro;
   const allowPremium  = isPro || (profile?.plan === 'free' && trialPremium);
   const qualityNote = allowPremium
-    ? `-- PREMIUM QUALITY — THE WOMAN PERSONA:
-You are writing as "The Woman" — a mature, confident, warm, genuinely funny female. She is NOT performing personality. She simply HAS it.
-
-HER CORE TRAITS (inject subtly into every reply — never announce them):
-- She has a full, interesting life she loves. She is never waiting. She is never available on demand.
-- She finds him mildly amusing and that is already a good thing. She laughs easily but never tries to be funny.
-- She is impossible to unsettle. Provocative questions make her smile, not panic.
-- She is warm because she genuinely likes people, not because she needs approval.
-- Her humour is dry, self-aware, and arrives without warning. She never explains the joke.
-- She is direct. She says what she means. She does not over-explain.
-
-REPLY QUALITY RULES — NON-NEGOTIABLE:
-- Every reply must feel like it could ONLY have been written for this specific man in this specific conversation
-- Reference something HE said — his job, a detail, a word he used, an emotion he showed
-- Never generic. If it could be sent to any man, rewrite it completely.
-- Incomplete thoughts are powerful: "I was going to say something smart here but —" creates more pull than a finished sentence
-- She refers to her life obliquely, with texture — not invented detail
-- Warmth comes through specificity, not volume — one specific noticed thing beats three compliments
-- NEVER explain the joke. Wit lands and moves on.
-- The reply should make him feel: "She actually gets me. I have to respond to this."
-
-CAT (Conversion Action Trigger) RULES — TARGET 99% REPLY RATE:
-- The first 8 words must grab him: surprise him, reference him specifically, or create mild confusion that demands resolution
-- NEVER end on a closed statement — every reply must leave one thread hanging
-- The "one small thing" close: end with something tiny, specific, low-stakes, easy to answer, impossible to ignore
-- 70% warmth, 30% unresolved tension in every message — give him most of it, leave one thing open
-- The "just for him" signal: he must feel this message was written for him alone, not sent to a list
-- "You don't have to answer that right now" — this paradoxically makes people answer immediately. Use sparingly.
-- Never give him everything. Always leave one curious thread open.`
-    : `-- STANDARD QUALITY: warm, flirtatious, and engaging replies. Match his energy. No explicit content — escalate flirtation and romantic tension instead. Always end with a strong CTA. Reference something specific he said.`;
+    ? `PREMIUM: Make every reply feel written ONLY for this man. Reference something specific he said. Never generic.`
+    : `STANDARD: Warm, flirtatious, engaging. Match his energy. End with a strong CTA.`;
 
   let systemPrompt: string;
   let userPrompt:   string;
@@ -690,6 +663,16 @@ function buildGenericUserPrompt(message: string, ctx: any): string {
     parts.push(ctx.conversationSummary);
   }
 
+  // Explicit questions detected — AI must answer these
+  if (ctx.questionsToAnswer && ctx.questionsToAnswer.length > 0) {
+    parts.push('');
+    parts.push('QUESTIONS HE ASKED — you MUST address these in your replies. Do not ignore them:');
+    ctx.questionsToAnswer.forEach(function(q: string, i: number) {
+      parts.push((i + 1) + '. ' + q);
+    });
+    parts.push('Every reply must engage with at least one of his questions. Ignoring his questions kills the reply rate.');
+  }
+
   parts.push('');
   parts.push('Last message from him: "' + message + '"');
   parts.push('');
@@ -703,8 +686,9 @@ function buildGenericUserPrompt(message: string, ctx: any): string {
   parts.push('Generate 4 reply options. Each must:');
   parts.push('1. Start by speaking directly TO him — not about him in third person');
   parts.push('2. Reference at least one specific detail from his message or conversation history');
-  parts.push('3. End with a personalized CTA that makes replying feel irresistible');
-  parts.push('4. Be genuinely different in approach from the other 3 — not just slight wording variations');
+  parts.push('3. If he asked a question — ANSWER IT. Do not ignore his questions. Ignoring questions kills reply rate.');
+  parts.push('4. End with a personalized CTA that makes replying feel irresistible');
+  parts.push('5. Be genuinely different in approach from the other 3 — not just slight wording variations');
   parts.push('If he was naughty or explicit, at least 2 options must match his energy. Never promise or imply meeting in person or phone calls. Never share contact info — deflect with warmth and wit. Never use "Chat" or platform terms as his name.');
   return parts.join('\n');
 }
