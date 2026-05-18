@@ -724,7 +724,7 @@ async function callGroq(
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
       body: JSON.stringify({
         model,
-        max_tokens:      800,
+        max_tokens:      600,
         temperature:     0.85,
         response_format: { type: 'json_object' },
         messages: [
@@ -793,41 +793,44 @@ async function callAI(systemPrompt: string, userPrompt: string): Promise<string>
   const groqKey   = process.env.GROQ_API_KEY || '';
   const googleKey = process.env.GOOGLE_AI_API_KEY || '';
 
-  // Log key status on every call — visible in Vercel function logs
-  console.log('[CIC] Keys present — GROQ:', !!groqKey, 'Google:', !!googleKey);
+  console.log('[CIC] Keys — GROQ:', !!groqKey, 'Google:', !!googleKey);
   if (!groqKey && !googleKey) {
     throw new Error('AUTH: No API keys configured. Set GROQ_API_KEY in Vercel environment variables.');
   }
 
   if (groqKey) {
-    // Attempt 1 — 70b
-    const r1 = await callGroq(groqKey, 'llama-3.3-70b-versatile', systemPrompt, userPrompt, 12000);
-    if (r1 === 'AUTH_ERROR') throw new Error('AUTH: GROQ_API_KEY is invalid or expired. Go to console.groq.com and generate a new key, then update it in Vercel environment variables.');
+    // Attempt 1 — 8b-instant FIRST (30k TPM free — 5x more headroom than 70b)
+    const r1 = await callGroq(groqKey, 'llama-3.1-8b-instant', systemPrompt, userPrompt, 10000);
+    if (r1 === 'AUTH_ERROR') throw new Error('AUTH: GROQ_API_KEY is invalid or expired. Update it in Vercel environment variables.');
     if (r1 && !r1.startsWith('RATE_LIMIT:')) return r1;
 
-    // Attempt 2 — 8b
-    const r2 = await callGroq(groqKey, 'llama-3.1-8b-instant', systemPrompt, userPrompt, 8000);
-    if (r2 === 'AUTH_ERROR') throw new Error('AUTH: GROQ_API_KEY is invalid or expired. Go to console.groq.com and generate a new key, then update it in Vercel environment variables.');
-    if (r2 && !r2.startsWith('RATE_LIMIT:')) return r2;
+    // Attempt 2 — gemma2-9b (separate 15k TPM pool — different model family)
+    const r2 = await callGroq(groqKey, 'gemma2-9b-it', systemPrompt, userPrompt, 10000);
+    if (r2 && !r2.startsWith('RATE_LIMIT:') && r2 !== 'AUTH_ERROR') return r2;
 
-    // Both rate-limited — try Google
+    // Attempt 3 — llama-3.3-70b (6k TPM — use as quality upgrade when available)
+    const r3 = await callGroq(groqKey, 'llama-3.3-70b-versatile', systemPrompt, userPrompt, 14000);
+    if (r3 === 'AUTH_ERROR') throw new Error('AUTH: GROQ_API_KEY is invalid or expired.');
+    if (r3 && !r3.startsWith('RATE_LIMIT:')) return r3;
+
+    // All Groq models rate-limited — try Google
     if (googleKey) {
       const rg = await callGoogle(googleKey, systemPrompt, userPrompt);
       if (rg && !rg.startsWith('RATE_LIMIT:')) return rg;
     }
 
-    // Wait and retry
+    // Wait for shortest rate limit window and retry 8b
     const w1 = r1?.startsWith('RATE_LIMIT:') ? parseInt(r1.split(':')[1]) : 4000;
     const w2 = r2?.startsWith('RATE_LIMIT:') ? parseInt(r2.split(':')[1]) : 4000;
-    const waitMs = Math.min(w1, w2, 8000);
-    console.warn('[CIC] All rate-limited. Waiting', waitMs, 'ms');
+    const waitMs = Math.min(w1, w2, 6000);
+    console.warn('[CIC] All rate-limited. Waiting', waitMs, 'ms then retry');
     await sleepMs(waitMs);
 
-    const r3 = await callGroq(groqKey, 'llama-3.1-8b-instant', systemPrompt, userPrompt, 8000);
-    if (r3 && !r3.startsWith('RATE_LIMIT:') && r3 !== 'AUTH_ERROR') return r3;
-
-    const r4 = await callGroq(groqKey, 'llama-3.3-70b-versatile', systemPrompt, userPrompt, 10000);
+    const r4 = await callGroq(groqKey, 'llama-3.1-8b-instant', systemPrompt, userPrompt, 10000);
     if (r4 && !r4.startsWith('RATE_LIMIT:') && r4 !== 'AUTH_ERROR') return r4;
+
+    const r5 = await callGroq(groqKey, 'gemma2-9b-it', systemPrompt, userPrompt, 10000);
+    if (r5 && !r5.startsWith('RATE_LIMIT:') && r5 !== 'AUTH_ERROR') return r5;
   }
 
   if (googleKey) {
@@ -835,9 +838,8 @@ async function callAI(systemPrompt: string, userPrompt: string): Promise<string>
     if (rg2 && !rg2.startsWith('RATE_LIMIT:')) return rg2;
   }
 
-  throw new Error('All AI providers failed. Check API keys in Vercel environment variables.');
+  throw new Error('All AI providers rate-limited. Wait 30 seconds and try again.');
 }
-
 function parseAIResponse(text: string, platform: string, scenario: any): any {
   try {
     const clean  = text.replace(/```json\n?|```\n?/g, '').trim();
