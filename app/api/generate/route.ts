@@ -59,7 +59,7 @@ async function generate(system: string, user: string): Promise<string> {
         new Promise<string>(resolve => setTimeout(resolve, 400))
           .then(() => generateText({
             model: google('gemini-2.5-flash'),
-            system,
+            system + `\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.`,
             prompt: user,
             temperature: 0.92,
             maxTokens: 900,
@@ -140,7 +140,7 @@ async function generate(system: string, user: string): Promise<string> {
     try {
       const result = await generateText({
         model: google('gemini-2.5-flash-lite'),
-        system,
+        system + `\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.`,
         prompt: user,
         temperature: 0.92,
         maxTokens: 900,
@@ -161,7 +161,7 @@ async function generate(system: string, user: string): Promise<string> {
     try {
       const result = await generateText({
         model: google('gemini-2.5-pro'),
-        system,
+        system + `\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.`,
         prompt: user,
         temperature: 0.92,
         maxTokens: 900,
@@ -181,19 +181,40 @@ async function generate(system: string, user: string): Promise<string> {
 
 // ─── Parse AI response ────────────────────────────────────────────────────────
 function parseReplies(text: string): Array<{tone: string, text: string}> {
+  if (!text) return []
+
+  // Step 1: strip markdown fences (Gemini often wraps in ```json ... ```)
+  let clean = text
+    .replace(/^```(?:json)?\s*/im, '')
+    .replace(/```\s*$/im, '')
+    .trim()
+
+  // Step 2: try direct parse
   try {
-    const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
     const parsed = JSON.parse(clean)
-    if (Array.isArray(parsed.replies)) return parsed.replies
+    if (Array.isArray(parsed.replies) && parsed.replies.length > 0) return parsed.replies
   } catch {}
 
-  const match = text.match(/\{[\s\S]*"replies"[\s\S]*?\}/)
+  // Step 3: extract the JSON object containing "replies" — handles extra text around it
+  const match = clean.match(/\{[\s\S]*?"replies"\s*:\s*\[[\s\S]*?\]\s*\}/)
   if (match) {
     try {
       const parsed = JSON.parse(match[0])
-      if (Array.isArray(parsed.replies)) return parsed.replies
+      if (Array.isArray(parsed.replies) && parsed.replies.length > 0) return parsed.replies
     } catch {}
   }
+
+  // Step 4: extract individual reply objects — handles malformed outer wrapper
+  const replyMatches = clean.matchAll(/\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)
+  const replies: Array<{tone: string, text: string}> = []
+  for (const m of replyMatches) {
+    try {
+      replies.push({ tone: m[1], text: JSON.parse(`"${m[2]}"`) })
+    } catch {
+      replies.push({ tone: m[1], text: m[2] })
+    }
+  }
+  if (replies.length > 0) return replies
 
   return []
 }
