@@ -37,6 +37,7 @@ async function generate(system: string, user: string): Promise<string> {
 
     if (groqKey) {
       const groq = createGroq({ apiKey: groqKey })
+      // Groq fires immediately — Gemini gets a 400ms delay so Groq wins whenever it has capacity
       racers.push(
         generateText({
           model: groq('llama-3.3-70b-versatile'),
@@ -53,19 +54,22 @@ async function generate(system: string, user: string): Promise<string> {
 
     if (googleKey) {
       const google = createGoogleGenerativeAI({ apiKey: googleKey })
+      // Gemini delayed 400ms — acts as hot standby, takes over instantly if Groq is rate-limited
       racers.push(
-        generateText({
-          model: google('gemini-2.5-flash'),
-          system,
-          prompt: user,
-          temperature: 0.92,
-          maxTokens: 900,
-          topP: 0.95,
-        }).then(r => {
-          if (!r.text) throw new Error('Empty response')
-          console.log('[CIC] Race winner: Gemini 2.5 Flash')
-          return r.text
-        })
+        new Promise<string>(resolve => setTimeout(resolve, 400))
+          .then(() => generateText({
+            model: google('gemini-2.5-flash'),
+            system,
+            prompt: user,
+            temperature: 0.92,
+            maxTokens: 900,
+            topP: 0.95,
+          }))
+          .then(r => {
+            if (!r.text) throw new Error('Empty response')
+            console.log('[CIC] Race winner: Gemini 2.5 Flash')
+            return r.text
+          })
       )
     }
 
@@ -398,25 +402,31 @@ Return ONLY valid JSON, nothing else:
 }
 
 // ─── Post-process replies ─────────────────────────────────────────────────────
+function isCompleteSentence(text: string): boolean {
+  // A complete sentence ends with . ? ! or closing quote/bracket followed by punctuation
+  return /[.?!][\"\']?\s*$/.test(text.trim())
+}
+
 function postProcess(replies: Array<{tone: string, text: string}>, platform: string, message: string): Array<{tone: string, text: string}> {
   const isTF = platform === 'chathomebase' || platform === 'textingfactory'
 
   return replies.map(r => {
     let text = (r.text || '').trim()
 
+    // ── Strip banned endings ──────────────────────────────────────────────────
     text = text
       .replace(/[,.]?\s*okay[,]?\s*your turn[,.]?\s*be honest with me\??\s*$/i, '')
       .replace(/[,.]?\s*show me your fantasies\.?\s*$/i, '')
-      .replace(/[,.]?\s*i'?m craving something wild\.?\s*$/i, '')
+      .replace(/[,.]?\s*i\'?m craving something wild\.?\s*$/i, '')
       .replace(/[,.]?\s*be honest with me\.?\s*$/i, '')
       .replace(/[,.]?\s*i need to know\.?\s*$/i, '')
-      .replace(/[,.]?\s*let'?s keep this going\.?\s*$/i, '')
-      .replace(/[,.]?\s*i'?m here for (you|this)\.?\s*$/i, '')
+      .replace(/[,.]?\s*let\'?s keep this going\.?\s*$/i, '')
+      .replace(/[,.]?\s*i\'?m here for (you|this)\.?\s*$/i, '')
       .replace(/[,.]?\s*i feel like we have a connection\.?\s*$/i, '')
     text = text.trim().replace(/[,\s]+$/, '').trim()
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    // Strip meetup/call language
+    // ── Strip meetup/call language ────────────────────────────────────────────
     text = text
       .replace(/\bget together\b/gi, 'keep talking')
       .replace(/\bcome over\b/gi, 'keep this going')
@@ -425,22 +435,40 @@ function postProcess(replies: Array<{tone: string, text: string}>, platform: str
       .replace(/\bmeet up\b/gi, 'connect more')
       .replace(/\bin person\b/gi, 'on here')
 
-    // Strip generic openers
-    text = text.replace(/^(that sounds amazing|that's so sweet|aww|how sweet|i love that|wow that's|oh that's)[,!.]?\s*/i, '')
+    // ── Strip generic openers ─────────────────────────────────────────────────
+    text = text.replace(/^(that sounds amazing|that\'s so sweet|aww|how sweet|i love that|wow that\'s|oh that\'s)[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
+    // ── Trim to complete sentence if too long ─────────────────────────────────
     if (isTF && text.length > 250) {
       const cut = text.substring(0, 247)
       const last = Math.max(cut.lastIndexOf('?'), cut.lastIndexOf('.'), cut.lastIndexOf('!'))
       text = last > 150 ? cut.substring(0, last + 1) : cut + '...'
     }
 
-    if (text.length < 75) {
+    // ── CRITICAL: only append fillers/CTAs if text is a complete sentence ─────
+    // An incomplete sentence (ends mid-word, with comma, with em-dash, with " — ")
+    // must NEVER have a CTA bolted on. Drop it instead — better no reply than a broken one.
+    const complete = isCompleteSentence(text)
+
+    if (!complete) {
+      // Try to salvage by trimming to last complete sentence
+      const lastPunct = Math.max(text.lastIndexOf('?'), text.lastIndexOf('.'), text.lastIndexOf('!'))
+      if (lastPunct > 30) {
+        text = text.substring(0, lastPunct + 1).trim()
+      } else {
+        // No salvageable sentence — mark for removal
+        return { tone: r.tone || 'Reply', text: '' }
+      }
+    }
+
+    // ── Pad short but complete replies ───────────────────────────────────────
+    if (text.length < 75 && isCompleteSentence(text)) {
       const fillers = [
-        " — honestly I need to hear more about that?",
-        " — okay now I'm genuinely curious, tell me more?",
-        "... there's more to this story isn't there?",
-        " — what made you think of that?",
+        " What\'s your take on that?",
+        " What made you bring that up?",
+        " I\'m curious what you think.",
+        " Tell me something I wouldn\'t expect.",
       ]
       for (const f of fillers) {
         const padded = text + f
@@ -451,12 +479,13 @@ function postProcess(replies: Array<{tone: string, text: string}>, platform: str
       }
     }
 
-    if (!text.includes('?')) {
+    // ── Add CTA only if reply has no question and ends cleanly ───────────────
+    if (!text.includes('?') && isCompleteSentence(text)) {
       const ctas = [
-        " — okay your turn, be honest with me?",
-        "... what actually happened after that?",
-        " — tell me the real version?",
-        " — what are you thinking right now?",
+        " What\'s actually going on in your world right now?",
+        " What would you do differently if you could?",
+        " What\'s something people always get wrong about you?",
+        " What does that say about you, do you think?",
       ]
       for (const cta of ctas) {
         const withCta = text + cta
