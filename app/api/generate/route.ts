@@ -59,7 +59,7 @@ async function generate(system: string, user: string): Promise<string> {
         new Promise<string>(resolve => setTimeout(resolve, 400))
           .then(() => generateText({
             model: google('gemini-2.5-flash'),
-            system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
+            system: system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
             prompt: user,
             temperature: 0.92,
             maxTokens: 900,
@@ -140,7 +140,7 @@ async function generate(system: string, user: string): Promise<string> {
     try {
       const result = await generateText({
         model: google('gemini-2.5-flash-lite'),
-        system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
+        system: system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
         prompt: user,
         temperature: 0.92,
         maxTokens: 900,
@@ -161,7 +161,7 @@ async function generate(system: string, user: string): Promise<string> {
     try {
       const result = await generateText({
         model: google('gemini-2.5-pro'),
-        system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
+        system: system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
         prompt: user,
         temperature: 0.92,
         maxTokens: 900,
