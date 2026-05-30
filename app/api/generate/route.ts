@@ -1,7 +1,8 @@
-// CIC generate route v8.1.0 — Gemini primary + Groq fallback
+// CIC generate route v8.2.0 — Cerebras+Gemini race, Groq as final fallback
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
-import { createGroq } from '@ai-sdk/groq'
+import { createOpenAI } from '@ai-sdk/openai'  // Cerebras uses OpenAI-compatible API
+import { createGroq } from '@ai-sdk/groq'       // kept as fallback
 import { google } from '@ai-sdk/google'
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -18,25 +19,50 @@ export async function OPTIONS() {
 }
 
 // ─── AI Generation ────────────────────────────────────────────────────────────
-async function generate(prompt: string): Promise<string> {
+// generate() accepts system + user separately so Gemini gets proper role split
+// Groq/OpenRouter receive them merged — both work optimally this way
+async function generate(system: string, user: string): Promise<string> {
   const errors: string[] = []
+  const fullPrompt = system + '\n\n' + user  // merged for non-Gemini providers
 
-  const googleKey = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
-  const groqKey   = process.env.GROQ_API_KEY
+  const googleKey    = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
+  const cerebrasKey  = process.env.CEREBRAS_API_KEY
+  const groqKey      = process.env.GROQ_API_KEY
 
-  // ── 1. Race Gemini vs Groq — fastest wins ────────────────────────────────
-  // Both are fired simultaneously. Whichever responds first is returned.
-  // If one fails (rate limit, quota) the other still wins cleanly.
-  if (googleKey || groqKey) {
+  // ── 1. Race Cerebras vs Gemini — fastest wins ──────────────────────────────
+  // Cerebras: same Llama 3.3 70B as Groq, 2000+ tok/s, 1M tokens/day free
+  // Gemini: reliable fallback, 1500 req/day free, system/user split for quality
+  if (cerebrasKey || googleKey) {
     const racers: Promise<string>[] = []
+
+    if (cerebrasKey) {
+      const cerebras = createOpenAI({
+        apiKey: cerebrasKey,
+        baseURL: 'https://api.cerebras.ai/v1',
+      })
+      racers.push(
+        generateText({
+          model: cerebras('llama-3.3-70b'),
+          prompt: fullPrompt,
+          temperature: 0.78 + Math.random() * 0.19,
+          maxTokens: 900,
+        }).then(r => {
+          if (!r.text) throw new Error('Empty response')
+          console.log('[CIC] Race winner: Cerebras Llama-3.3-70b')
+          return r.text
+        })
+      )
+    }
 
     if (googleKey) {
       racers.push(
         generateText({
           model: google('gemini-2.0-flash'),
-          prompt,
-          temperature: 0.85,
+          system,
+          prompt: user,
+          temperature: 0.92,
           maxTokens: 900,
+          topP: 0.95,
         }).then(r => {
           if (!r.text) throw new Error('Empty response')
           console.log('[CIC] Race winner: Gemini 2.0 Flash')
@@ -45,44 +71,56 @@ async function generate(prompt: string): Promise<string> {
       )
     }
 
-    if (groqKey) {
-      const groq = createGroq({ apiKey: groqKey })
-      racers.push(
-        generateText({
-          model: groq('llama-3.3-70b-versatile'),
-          prompt,
-          temperature: 0.78 + Math.random() * 0.19,
-          maxTokens: 900,
-        }).then(r => {
-          if (!r.text) throw new Error('Empty response')
-          console.log('[CIC] Race winner: Groq llama-3.3-70b')
-          return r.text
-        })
-      )
-    }
-
     try {
-      // Promise.any returns the first one that resolves — ignores rejections
-      // unless ALL reject, in which case it throws an AggregateError
       const winner = await Promise.any(racers)
       if (winner) return winner
     } catch (e: any) {
-      // Both failed — collect errors and fall through to individual fallbacks
       errors.push(`Race failed: ${e?.message?.substring(0, 120)}`)
       console.warn('[CIC] Both race candidates failed, trying fallbacks')
     }
   }
 
-  // ── 2. Gemini fallback models (if 2.0-flash hit quota) ───────────────────
+  // ── 2. Cerebras fallback models ────────────────────────────────────────────
+  if (cerebrasKey) {
+    const cerebras = createOpenAI({
+      apiKey: cerebrasKey,
+      baseURL: 'https://api.cerebras.ai/v1',
+    })
+    const cerebrasModels = ['llama3.1-70b', 'llama3.1-8b']
+    for (const model of cerebrasModels) {
+      try {
+        const result = await generateText({
+          model: cerebras(model),
+          prompt: fullPrompt,
+          temperature: 0.78 + Math.random() * 0.19,
+          maxTokens: 900,
+        })
+        if (result.text) {
+          console.log('[CIC] Cerebras fallback success:', model)
+          return result.text
+        }
+      } catch (e: any) {
+        errors.push(`Cerebras/${model}: ${e?.message?.substring(0, 80)}`)
+      }
+    }
+  }
+
+  // ── 3. Gemini fallback models ──────────────────────────────────────────────
   if (googleKey) {
-    const geminiModels = ['gemini-1.5-flash-latest', 'gemini-1.5-pro-latest']
+    const geminiModels = [
+      'gemini-2.5-flash-preview-05-20',
+      'gemini-1.5-pro-latest',
+      'gemini-1.5-flash-latest',
+    ]
     for (const model of geminiModels) {
       try {
         const result = await generateText({
           model: google(model),
-          prompt,
-          temperature: 0.85,
+          system,
+          prompt: user,
+          temperature: 0.92,
           maxTokens: 900,
+          topP: 0.95,
         })
         if (result.text) {
           console.log('[CIC] Gemini fallback success:', model)
@@ -94,15 +132,15 @@ async function generate(prompt: string): Promise<string> {
     }
   }
 
-  // ── 3. Groq fallback models (if 70b hit daily limit) ─────────────────────
+  // ── 4. Groq as final fallback (kept for resilience) ────────────────────────
   if (groqKey) {
     const groq = createGroq({ apiKey: groqKey })
-    const groqFallbacks = ['llama-3.1-8b-instant', 'gemma2-9b-it', 'mixtral-8x7b-32768']
-    for (const model of groqFallbacks) {
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
+    for (const model of groqModels) {
       try {
         const result = await generateText({
           model: groq(model),
-          prompt,
+          prompt: fullPrompt,
           temperature: 0.78 + Math.random() * 0.19,
           maxTokens: 900,
         })
@@ -118,7 +156,7 @@ async function generate(prompt: string): Promise<string> {
     }
   }
 
-  // ── 4. OpenRouter as last resort ──────────────────────────────────────────
+  // ── 4. OpenRouter last resort ──────────────────────────────────────────────
   const openrouterKey = process.env.OPENROUTER_API_KEY
   if (openrouterKey) {
     try {
@@ -130,8 +168,11 @@ async function generate(prompt: string): Promise<string> {
         },
         body: JSON.stringify({
           model: 'meta-llama/llama-3.3-70b-instruct:free',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.85,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user',   content: user },
+          ],
+          temperature: 0.88,
           max_tokens: 900,
         }),
       })
@@ -169,7 +210,7 @@ function parseReplies(text: string): Array<{tone: string, text: string}> {
 }
 
 // ─── Build prompt ─────────────────────────────────────────────────────────────
-function buildPrompt(message: string, platform: string, context: string, location: string, plan: string = 'trial', previousTones: string[] = [], englishVariety: string = 'AmEng', myName: string | null = null): string {
+function buildPrompt(message: string, platform: string, context: string, location: string, plan: string = 'trial', previousTones: string[] = [], englishVariety: string = 'AmEng', myName: string | null = null): { system: string, user: string } {
   const isTF = platform === 'chathomebase' || platform === 'textingfactory'
   const charRule = isTF
     ? 'Each reply: 80-260 chars. Under 80 = too thin, add warmth and substance. Over 260 = trim at the last complete thought.'
@@ -247,7 +288,47 @@ She is not scared. She is not hiding. She is just a woman who takes her time.
 She makes him feel like getting her number would be worth the wait. She does not slam the door — she leaves it ajar and puts something more interesting in front of him right now.
 ` : ''
 
-  return `She is a real woman in a real conversation. She is intelligent, warm, and self-possessed. She is genuinely interested in this man. She has a life, opinions, and feelings of her own. She texts the way she thinks — naturally, directly, without performing.
+  // Split into system (persona/rules) and user (the actual message to respond to)
+  // This gives Gemini the role structure it needs for best quality
+  const systemPrompt = `You are a real woman's authentic voice in a dating conversation. You write exactly as she would — natural, direct, warm, and completely human. You follow every instruction below without exception and never break character.
+
+ENGLISH: ${engInstruction}
+${nameNote}
+
+CONVERSATION HISTORY:
+${historyNote || 'No prior history — this is the opening exchange.'}
+
+${photoBlock}${meetupBlock}${contactBlock}
+
+HER CHARACTER:
+She is intelligent, self-possessed, and genuinely interested in this man. She has a life, opinions, and feelings of her own. She is not on a platform. She is not playing a role. She texts the way she thinks — naturally, directly, without performing.
+
+HER VOICE — NON-NEGOTIABLE:
+Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't, couldn't, we're.
+Short sentences when she wants something to land. Longer ones when she wants to draw him in.
+Fragments are fine. Real people use them.
+She never sounds like she is trying to be charming. She just is.
+
+PUNCTUATION:
+One exclamation point maximum per reply, only when genuinely surprised or happy.
+Ellipsis (...) only when a thought genuinely trails off.
+No em dashes. No semicolons. No formal grammar.
+
+BANNED PHRASES — never write these:
+"That sounds amazing" | "How sweet" | "I love that" | "Wow" alone | "Tell me more" | "Be honest with me" | "I'm here for you" | "Let's keep this going" | "I feel like we have a connection" | "show me your fantasies" | any mention of platform, subscription, or content.
+She never promises or suggests meeting in person. She never offers contact details.
+
+${avoidTones}
+${charRule}
+${locationNote}
+
+RESPONSE FORMAT — return ONLY valid JSON, nothing else, no markdown, no explanation:
+{"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}
+
+TONES — choose 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy${plan === 'pro' ? ', Naughty' : ''}
+ORDER: Best reply first — the most irresistible, specific, human option goes first.`
+
+  const userPrompt = `She is a real woman in a real conversation. She is intelligent, warm, and self-possessed. She is genuinely interested in this man. She has a life, opinions, and feelings of her own. She texts the way she thinks — naturally, directly, without performing.
 
 LANGUAGE: She writes in ${engInstruction}
 ${nameNote}
@@ -438,7 +519,7 @@ Write 3 trigger messages (50-150 chars each):
 
 Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text":"message"},{"label":"label","text":"message"},{"label":"label","text":"message"}]}`
 
-      const raw = await generate(prompt)
+      const raw = await generate('', prompt)
       try {
         const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
         const parsed = JSON.parse(clean)
@@ -462,8 +543,8 @@ Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text"
     if (apiKeyHeader.startsWith('pro_')) userPlan = 'pro'
     else if (apiKeyHeader.startsWith('basic_')) userPlan = 'basic'
 
-    const prompt = buildPrompt(message, platform, context, location, userPlan, previousTones, englishVariety, myName)
-    const rawText = await generate(prompt)
+    const { system, user } = buildPrompt(message, platform, context, location, userPlan, previousTones, englishVariety, myName)
+    const rawText = await generate(system, user)
     const replies = parseReplies(rawText)
     const finalReplies = postProcess(
       replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }],
