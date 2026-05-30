@@ -409,6 +409,7 @@ TONES to choose 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, D
 
 Return ONLY valid JSON, nothing else:
 {"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}`
+  return { system: systemPrompt, user: userPrompt }
 }
 
 // ─── Post-process replies ─────────────────────────────────────────────────────
