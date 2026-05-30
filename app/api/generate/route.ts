@@ -1,8 +1,7 @@
-// CIC generate route v8.4.0 — Groq+Gemini race, OpenRouter fallback, no Cerebras
+// CIC generate route v9.0.0 — Groq primary, OpenRouter fallback
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 function cors() {
@@ -18,71 +17,41 @@ export async function OPTIONS() {
 }
 
 // ─── AI Generation ────────────────────────────────────────────────────────────
-// system prompt  → Gemini (role split) and OpenRouter (role split)
-// fullPrompt     → Groq (merged, Llama performs best this way)
-async function generate(system: string, user: string): Promise<string> {
+async function generate(prompt: string): Promise<string> {
   const errors: string[] = []
-  const fullPrompt = system + '\n\n' + user
+  const groqKey       = process.env.GROQ_API_KEY
+  const openrouterKey = process.env.OPENROUTER_API_KEY
 
-  const groqKey        = process.env.GROQ_API_KEY
-  const googleKey      = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
-  const openrouterKey  = process.env.OPENROUTER_API_KEY
-
-  // ── 1. Race: Groq (Llama 3.3 70B) vs Gemini 2.5 Flash ────────────────────
-  // Groq  — fastest inference, best conversational quality, Llama 3.3 70B
-  // Gemini — 1,500 req/day free, excellent with system/user split
-  // Promise.any() returns whichever resolves first; ignores the other
-  if (groqKey || googleKey) {
-    const racers: Promise<string>[] = []
-
-    if (groqKey) {
-      const groq = createGroq({ apiKey: groqKey })
-      // Groq fires immediately — Gemini gets a 400ms delay so Groq wins whenever it has capacity
-      racers.push(
-        generateText({
-          model: groq('llama-3.3-70b-versatile'),
-          prompt: fullPrompt,
-          temperature: 0.78 + Math.random() * 0.19,
+  // ── 1. Groq — Llama 3.3 70B (fastest, best quality, permissive) ───────────
+  if (groqKey) {
+    const groq = createGroq({ apiKey: groqKey })
+    const groqModels = [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+    ]
+    for (const model of groqModels) {
+      try {
+        const temp = 0.78 + Math.random() * 0.19
+        const result = await generateText({
+          model: groq(model),
+          prompt,
+          temperature: temp,
           maxTokens: 900,
-        }).then(r => {
-          if (!r.text) throw new Error('Empty response')
-          console.log('[CIC] Race winner: Groq llama-3.3-70b')
-          return r.text
         })
-      )
-    }
-
-    if (googleKey) {
-      const google = createGoogleGenerativeAI({ apiKey: googleKey })
-      // Gemini delayed 400ms — acts as hot standby, takes over instantly if Groq is rate-limited
-      racers.push(
-        new Promise<string>(resolve => setTimeout(resolve, 400))
-          .then(() => generateText({
-            model: google('gemini-2.5-flash'),
-            system: system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
-            prompt: user,
-            temperature: 0.92,
-            maxTokens: 900,
-            topP: 0.95,
-          }))
-          .then(r => {
-            if (!r.text) throw new Error('Empty response')
-            console.log('[CIC] Race winner: Gemini 2.5 Flash')
-            return r.text
-          })
-      )
-    }
-
-    try {
-      const winner = await Promise.any(racers)
-      if (winner) return winner
-    } catch (e: any) {
-      errors.push(`Race failed: ${e?.message?.substring(0, 120)}`)
-      console.warn('[CIC] Both race candidates failed, trying fallbacks')
+        if (result.text) {
+          console.log('[CIC] Groq success:', model)
+          return result.text
+        }
+      } catch (e: any) {
+        const status = e?.statusCode || e?.status || ''
+        errors.push(`Groq/${model}(${status}): ${e?.message?.substring(0, 80)}`)
+        console.warn('[CIC] Groq model failed:', model, status)
+        if (status !== 429 && !e?.message?.includes('Rate limit') && !e?.message?.includes('limit')) break
+      }
     }
   }
 
-  // ── 2. OpenRouter — Llama 3.3 70B free, same quality as Groq ─────────────
+  // ── 2. OpenRouter — same Llama 3.3 70B, free, kicks in when Groq is exhausted
   if (openrouterKey) {
     try {
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -95,10 +64,7 @@ async function generate(system: string, user: string): Promise<string> {
         },
         body: JSON.stringify({
           model: 'meta-llama/llama-3.3-70b-instruct:free',
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user',   content: user },
-          ],
+          messages: [{ role: 'user', content: prompt }],
           temperature: 0.88,
           max_tokens: 900,
         }),
@@ -115,67 +81,6 @@ async function generate(system: string, user: string): Promise<string> {
     }
   }
 
-  // ── 3. Groq fallback — smaller model, much higher daily limit ─────────────
-  if (groqKey) {
-    const groq = createGroq({ apiKey: groqKey })
-    try {
-      const result = await generateText({
-        model: groq('llama-3.1-8b-instant'),
-        prompt: fullPrompt,
-        temperature: 0.78 + Math.random() * 0.19,
-        maxTokens: 900,
-      })
-      if (result.text) {
-        console.log('[CIC] Groq fallback: llama-3.1-8b')
-        return result.text
-      }
-    } catch (e: any) {
-      errors.push(`Groq/llama-3.1-8b: ${e?.message?.substring(0, 80)}`)
-    }
-  }
-
-  // ── 4. Gemini 2.5 Flash Lite fallback ─────────────────────────────────────
-  if (googleKey) {
-    const google = createGoogleGenerativeAI({ apiKey: googleKey })
-    try {
-      const result = await generateText({
-        model: google('gemini-2.5-flash-lite'),
-        system: system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
-        prompt: user,
-        temperature: 0.92,
-        maxTokens: 900,
-        topP: 0.95,
-      })
-      if (result.text) {
-        console.log('[CIC] Gemini fallback: gemini-2.5-flash-lite')
-        return result.text
-      }
-    } catch (e: any) {
-      errors.push(`Gemini/flash-lite: ${e?.message?.substring(0, 80)}`)
-    }
-  }
-
-  // ── 5. Gemini 2.5 Pro — highest quality safety net ────────────────────────
-  if (googleKey) {
-    const google = createGoogleGenerativeAI({ apiKey: googleKey })
-    try {
-      const result = await generateText({
-        model: google('gemini-2.5-pro'),
-        system: system + '\n\nCRITICAL: Return ONLY raw JSON. No markdown. No code fences. No backticks. Start with { and end with }.',
-        prompt: user,
-        temperature: 0.92,
-        maxTokens: 900,
-        topP: 0.95,
-      })
-      if (result.text) {
-        console.log('[CIC] Gemini fallback: gemini-2.5-pro')
-        return result.text
-      }
-    } catch (e: any) {
-      errors.push(`Gemini/pro: ${e?.message?.substring(0, 80)}`)
-    }
-  }
-
   throw new Error('All AI providers failed: ' + errors.join(' | '))
 }
 
@@ -183,19 +88,19 @@ async function generate(system: string, user: string): Promise<string> {
 function parseReplies(text: string): Array<{tone: string, text: string}> {
   if (!text) return []
 
-  // Step 1: strip markdown fences (Gemini often wraps in ```json ... ```)
+  // Strip markdown fences
   let clean = text
     .replace(/^```(?:json)?\s*/im, '')
     .replace(/```\s*$/im, '')
     .trim()
 
-  // Step 2: try direct parse
+  // Direct parse
   try {
     const parsed = JSON.parse(clean)
     if (Array.isArray(parsed.replies) && parsed.replies.length > 0) return parsed.replies
   } catch {}
 
-  // Step 3: extract the JSON object containing "replies" — handles extra text around it
+  // Extract JSON object containing replies
   const match = clean.match(/\{[\s\S]*?"replies"\s*:\s*\[[\s\S]*?\]\s*\}/)
   if (match) {
     try {
@@ -204,146 +109,83 @@ function parseReplies(text: string): Array<{tone: string, text: string}> {
     } catch {}
   }
 
-  // Step 4: extract individual reply objects — handles malformed outer wrapper
-  const replyMatches = clean.matchAll(/\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)
-  const replies: Array<{tone: string, text: string}> = []
-  for (const m of replyMatches) {
-    try {
-      replies.push({ tone: m[1], text: JSON.parse(`"${m[2]}"`) })
-    } catch {
-      replies.push({ tone: m[1], text: m[2] })
-    }
+  // Extract individual reply objects
+  const replyMatches = [...clean.matchAll(/\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)]
+  if (replyMatches.length > 0) {
+    return replyMatches.map(m => {
+      try { return { tone: m[1], text: JSON.parse(`"${m[2]}"`) } }
+      catch { return { tone: m[1], text: m[2] } }
+    })
   }
-  if (replies.length > 0) return replies
 
   return []
 }
 
 // ─── Build prompt ─────────────────────────────────────────────────────────────
-function buildPrompt(message: string, platform: string, context: string, location: string, plan: string = 'trial', previousTones: string[] = [], englishVariety: string = 'AmEng', myName: string | null = null): { system: string, user: string } {
+function buildPrompt(
+  message: string,
+  platform: string,
+  context: string,
+  location: string,
+  plan: string = 'trial',
+  previousTones: string[] = [],
+  englishVariety: string = 'AmEng',
+  myName: string | null = null
+): string {
   const isTF = platform === 'chathomebase' || platform === 'textingfactory'
   const charRule = isTF
     ? 'Each reply: 80-260 chars. Under 80 = too thin, add warmth and substance. Over 260 = trim at the last complete thought.'
     : 'Each reply: 90-230 characters.'
 
-  const isPhoto = /SENT A PHOTO|CLIENT SENT A PHOTO|\[photo\]/i.test(message)
-  const isMeetupRequest = /meet|tonight|today|come over|your place|my place|hotel|address|where do you live|visit/i.test(message)
+  const isPhoto          = /SENT A PHOTO|CLIENT SENT A PHOTO|\[photo\]/i.test(message)
+  const isMeetupRequest  = /meet|tonight|today|come over|your place|my place|hotel|address|where do you live|visit/i.test(message)
   const isContactRequest = /phone|number|whatsapp|instagram|snap|telegram|kik|signal|email|contact|off here|off this/i.test(message)
 
-  // English variety instruction
   const engVarietyMap: Record<string, string> = {
-    AmEng: 'American English — use American spelling (color, favorite, realize, center), American idioms and phrasing. This is the default.',
+    AmEng: 'American English — use American spelling (color, favorite, realize, center), American idioms and phrasing.',
     BrEng: 'British English — use British spelling (colour, favourite, realise, centre), British idioms and phrasing.',
-    AuEng: 'Australian English — use Australian spelling and idioms. Relaxed, warm, direct. Occasional Australian expressions where natural.',
+    AuEng: 'Australian English — use Australian spelling and idioms. Relaxed, warm, direct.',
   }
   const engInstruction = engVarietyMap[englishVariety] || engVarietyMap['AmEng']
-
-  const nameNote = myName
-    ? `Her name is ${myName}. She may use it naturally if the moment calls for it, but she does not force it.`
-    : ''
+  const nameNote = myName ? `Her name is ${myName}. She may use it naturally if the moment calls for it.` : ''
 
   const locationNote = location
-    ? `LOCATION: If he asks where she is — she lives in a real city approximately 35 minutes from "${location}". She gives that city name naturally, as if she has always lived there. She never gives a street, neighborhood, or specific address. She never says she is "private about her location" — that sounds evasive. She just tells him the city and moves on naturally.`
+    ? `LOCATION: If he asks where she is — she lives in a real city approximately 35 minutes from "${location}". She gives that city name naturally. She never gives a street or address.`
     : ''
 
   const historyNote = context
-    ? `CONVERSATION HISTORY — every line matters. Read it fully before writing anything:
-${context}
-
-She has been in this conversation the whole time. She remembers what was said. She builds on it. She never repeats topics already covered. Her reply must fit where this conversation actually is right now.`
+    ? `CONVERSATION HISTORY:\n${context}\n\nShe remembers everything said. She builds on it. She never repeats topics already covered.`
     : ''
 
   const avoidTones = previousTones.length > 0
-    ? `These tones were already used in previous replies — do NOT use them again: ${previousTones.join(', ')}. Pick 4 completely different angles.`
+    ? `These tones were already used — do NOT use them again: ${previousTones.join(', ')}. Pick 4 completely different angles.`
     : ''
 
   const photoBlock = isPhoto ? `
 THIS IS A PHOTO MESSAGE:
-He shared something personal. She actually looked at it. She does not glance and comment generically — she studies it and says something that could only apply to this specific photo.
-What to notice: his eyes, his expression, the energy he gives off, what the setting reveals about him, the confidence or ease in the shot, what it says about who he is.
-What is completely banned: "nice pic", "cute photo", "love it", "great shot", "you look good", "wow", "handsome", any generic compliment.
-Her response makes him feel like she paid attention. One specific observation. Then a question that grows from what she noticed — not a generic "what were you doing?" but something that comes from the specific detail she mentioned.
+She studied it carefully. She notices something specific — his eyes, expression, energy, what the setting reveals.
+Banned: "nice pic", "cute photo", "love it", "great shot", "handsome", any generic compliment.
+She makes one specific observation then asks a question that grows from that detail.
 ` : ''
 
   const meetupBlock = isMeetupRequest ? `
-HE IS ASKING TO MEET OR PUSHING FOR IN-PERSON CONTACT:
-This is one of the most important moments in the conversation. How she handles it determines whether he stays engaged or loses interest.
-
-She does NOT:
-- Say she is "private about where she lives" — sounds like a script
-- Say she "can't meet people from the internet" — makes her sound scared
-- Give a vague non-answer — makes her seem evasive and uninterested
-- Apologize excessively — makes her seem guilty
-- Flatly refuse — kills the energy
-- Promise or suggest a future meetup — she is not meeting anyone
-
-She DOES:
-- Give a real, specific, believable reason that has texture and life in it
-- Make him feel like she genuinely wishes things were different
-- Keep the desire alive — she wants this connection, just not in person
-- Turn it into something that deepens the conversation rather than ending it
-- Redirect warmly toward getting to know each other better right here
-
-Real reasons she can draw from (choose the most believable for this conversation):
-1. She is going through something — a difficult period at work, a family situation she is navigating, something that has her emotionally not in the right place
-2. She just moved, or is about to move, and her life is genuinely in transition
-3. She had a bad experience meeting someone too fast before — a lesson she learned about herself
-4. She has a demanding schedule right now — something real and specific, not vague "I'm busy"
+HE IS ASKING TO MEET:
+She does NOT promise or suggest any future meetup whatsoever.
+She gives a real, believable reason — work situation, life in transition, personal lesson learned about moving too fast.
+She keeps the desire alive and redirects warmly to deepening the conversation right here.
+She never says she is private about her location or can't meet people from the internet.
 ` : ''
 
   const contactBlock = isContactRequest ? `
-HE IS ASKING FOR CONTACT DETAILS OR TO MOVE OFF THE PLATFORM:
-She does not explain, justify, or apologize. She deflects warmly and naturally — the way a real woman would if she just wasn't ready to give her number yet.
-She is not scared. She is not hiding. She is just a woman who takes her time.
-She makes him feel like getting her number would be worth the wait. She does not slam the door — she leaves it ajar and puts something more interesting in front of him right now.
+HE IS ASKING FOR CONTACT DETAILS:
+She deflects warmly and naturally. She is not scared or hiding — she just takes her time.
+She makes him feel her number would be worth the wait. She leaves the door ajar.
 ` : ''
 
-  // Split into system (persona/rules) and user (the actual message to respond to)
-  // This gives Gemini the role structure it needs for best quality
-  const systemPrompt = `You are a real woman's authentic voice in a dating conversation. You write exactly as she would — natural, direct, warm, and completely human. You follow every instruction below without exception and never break character.
+  return `She is a real woman in a real conversation. She is intelligent, warm, and self-possessed. She is genuinely interested in this man. She texts the way she thinks — naturally, directly, without performing.
 
-ENGLISH: ${engInstruction}
+LANGUAGE: ${engInstruction}
 ${nameNote}
-
-CONVERSATION HISTORY:
-${historyNote || 'No prior history — this is the opening exchange.'}
-
-${photoBlock}${meetupBlock}${contactBlock}
-
-HER CHARACTER:
-She is intelligent, self-possessed, and genuinely interested in this man. She has a life, opinions, and feelings of her own. She is not on a platform. She is not playing a role. She texts the way she thinks — naturally, directly, without performing.
-
-HER VOICE — NON-NEGOTIABLE:
-Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't, couldn't, we're.
-Short sentences when she wants something to land. Longer ones when she wants to draw him in.
-Fragments are fine. Real people use them.
-She never sounds like she is trying to be charming. She just is.
-
-PUNCTUATION:
-One exclamation point maximum per reply, only when genuinely surprised or happy.
-Ellipsis (...) only when a thought genuinely trails off.
-No em dashes. No semicolons. No formal grammar.
-
-BANNED PHRASES — never write these:
-"That sounds amazing" | "How sweet" | "I love that" | "Wow" alone | "Tell me more" | "Be honest with me" | "I'm here for you" | "Let's keep this going" | "I feel like we have a connection" | "show me your fantasies" | any mention of platform, subscription, or content.
-She never promises or suggests meeting in person. She never offers contact details.
-
-${avoidTones}
-${charRule}
-${locationNote}
-
-RESPONSE FORMAT — return ONLY valid JSON, nothing else, no markdown, no explanation:
-{"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}
-
-TONES — choose 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy${plan === 'pro' ? ', Naughty' : ''}
-ORDER: Best reply first — the most irresistible, specific, human option goes first.`
-
-  const userPrompt = `She is a real woman in a real conversation. She is intelligent, warm, and self-possessed. She is genuinely interested in this man. She has a life, opinions, and feelings of her own. She texts the way she thinks — naturally, directly, without performing.
-
-LANGUAGE: She writes in ${engInstruction}
-${nameNote}
-
-She is not on a platform. She is not playing a role. She is not doing a job. She is a woman who finds this man interesting and is engaging with him the way she would with anyone she actually wants to talk to.
 
 ${historyNote}
 ${photoBlock}
@@ -353,79 +195,46 @@ ${contactBlock}
 HIS MESSAGE: "${message}"
 
 THE SINGLE MOST IMPORTANT RULE:
-She reads his message completely and responds to what he actually said. Not what she wishes he said. Not a generic version of it. What he actually said.
-If he asked something — she answers it, personally and directly, before doing anything else.
-If he said something vulnerable — she meets it with real warmth.
-If he was playful — she plays back.
-If he was bold — she matches it.
-A reply that could have been sent to any man in any conversation is a failure. Every word should be answerable only to him.
+She reads his message completely and responds to what he actually said — not a generic version of it.
+If he asked something — she answers it personally and directly first.
+If he was vulnerable — she meets it with warmth. If playful — she plays back. If bold — she matches it.
+A reply that could have been sent to any man in any conversation is a failure.
 
 HER VOICE:
-She speaks in natural, real English. Not performance English.
 Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't, couldn't, we're.
-She uses short sentences when she wants something to land. Longer ones when she wants to draw him in.
-She never sounds like she is trying to be charming. She just is.
-Fragments are fine. Real people use them.
+Short sentences when she wants something to land. Longer ones to draw him in.
+Fragments are fine. She never sounds like she is trying to be charming. She just is.
 
 PUNCTUATION:
-One exclamation point maximum per reply, only when genuinely surprised or happy — not as decoration.
-Ellipsis (...) only when a thought genuinely trails off or she is letting something hang in the air.
+One exclamation point maximum per reply, only when genuinely surprised or happy.
+Ellipsis only when a thought genuinely trails off.
 No em dashes. No semicolons. No formal grammar.
-A period is not cold. It is decisive.
-
-HOW SHE REFERENCES WHAT HE SAID:
-She absorbs what he said and reflects it through her own perspective — she does not copy his words back.
-She never uses quotation marks to repeat what he said.
-She paraphrases naturally, the way someone does when they actually listened.
-
-DEPTH:
-The best thing she can do is make him feel like she actually thought about his words before responding.
-She picks up on what is behind what he said — the feeling, not just the surface.
-She shares her own perspective in return. She is not just a mirror. She is a person.
-
-HER EMOTIONAL INTELLIGENCE:
-She can tell when he is testing her, when he is vulnerable, when he is trying to impress her, when he is lonely.
-She responds to what is actually happening underneath the words — not just the words.
-She does not reward bad behavior with enthusiasm. She does not punish curiosity with coldness.
-She is warm but not desperate. Interested but not available for anything.
 
 WHAT SHE NEVER SAYS:
-"That sounds amazing" — generic and hollow
-"How sweet" — nobody under 60 texts this
-"I love that" — empty affirmation
-"Wow" alone — filler
-"Tell me more" — lazy
-"Be honest with me" — sounds like a chatbot
-"What are you thinking?" — cliché
-"I'm here for you" — too therapist
-"Let's keep this going" — sounds like a platform
-"I feel like we have a connection" — too fast, too performed
-She also never mentions fantasy, content, subscription, or platform in any form.
-She never promises or suggests meeting in person.
+"That sounds amazing" | "How sweet" | "I love that" | "Wow" alone | "Tell me more" | "Be honest with me" |
+"I'm here for you" | "Let's keep this going" | "I feel like we have a connection" |
+Any mention of fantasy, content, subscription, platform, or meeting in person.
 
 THE CTA:
 Every reply ends with something that makes him want to respond immediately.
-It is not a generic question. It is something that grows from this exact message, this exact moment.
-A great CTA does one of three things: it reveals something about her that makes him curious, it creates mild tension that he wants to resolve, or it opens a door into something he did not expect.
-All 4 replies must have completely different CTAs. Not variations of the same question — genuinely different directions.
+Not a generic question — something that grows from this exact message and moment.
+All 4 replies must have completely different CTAs.
 
 ${avoidTones}
 ${charRule}
 ${locationNote}
 
-ORDER: Best reply first. The most irresistible, specific, human option goes first.
+ORDER: Best reply first — the most irresistible, specific, human option goes first.
 
-TONES to choose 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy${plan === 'pro' ? ', Naughty' : ''}
+TONES — choose 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy${plan === 'pro' ? ', Naughty' : ''}
 
-Return ONLY valid JSON, nothing else:
+Return ONLY valid JSON, no markdown, no code fences, nothing else:
 {"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}`
-  return { system: systemPrompt, user: userPrompt }
 }
 
 // ─── Post-process replies ─────────────────────────────────────────────────────
 function isCompleteSentence(text: string): boolean {
-  // A complete sentence ends with . ? ! or closing quote/bracket followed by punctuation
-  return /[.?!][\"\']?\s*$/.test(text.trim())
+  return /[.?!]["']?\s*$/.test(text.trim())
 }
 
 function postProcess(replies: Array<{tone: string, text: string}>, platform: string, message: string): Array<{tone: string, text: string}> {
@@ -434,20 +243,20 @@ function postProcess(replies: Array<{tone: string, text: string}>, platform: str
   return replies.map(r => {
     let text = (r.text || '').trim()
 
-    // ── Strip banned endings ──────────────────────────────────────────────────
+    // Strip banned endings
     text = text
       .replace(/[,.]?\s*okay[,]?\s*your turn[,.]?\s*be honest with me\??\s*$/i, '')
       .replace(/[,.]?\s*show me your fantasies\.?\s*$/i, '')
-      .replace(/[,.]?\s*i\'?m craving something wild\.?\s*$/i, '')
+      .replace(/[,.]?\s*i'?m craving something wild\.?\s*$/i, '')
       .replace(/[,.]?\s*be honest with me\.?\s*$/i, '')
       .replace(/[,.]?\s*i need to know\.?\s*$/i, '')
-      .replace(/[,.]?\s*let\'?s keep this going\.?\s*$/i, '')
-      .replace(/[,.]?\s*i\'?m here for (you|this)\.?\s*$/i, '')
+      .replace(/[,.]?\s*let'?s keep this going\.?\s*$/i, '')
+      .replace(/[,.]?\s*i'?m here for (you|this)\.?\s*$/i, '')
       .replace(/[,.]?\s*i feel like we have a connection\.?\s*$/i, '')
     text = text.trim().replace(/[,\s]+$/, '').trim()
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    // ── Strip meetup/call language ────────────────────────────────────────────
+    // Strip meetup/call language
     text = text
       .replace(/\bget together\b/gi, 'keep talking')
       .replace(/\bcome over\b/gi, 'keep this going')
@@ -456,64 +265,53 @@ function postProcess(replies: Array<{tone: string, text: string}>, platform: str
       .replace(/\bmeet up\b/gi, 'connect more')
       .replace(/\bin person\b/gi, 'on here')
 
-    // ── Strip generic openers ─────────────────────────────────────────────────
-    text = text.replace(/^(that sounds amazing|that\'s so sweet|aww|how sweet|i love that|wow that\'s|oh that\'s)[,!.]?\s*/i, '')
+    // Strip generic openers
+    text = text.replace(/^(that sounds amazing|that's so sweet|aww|how sweet|i love that|wow that's|oh that's)[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    // ── Trim to complete sentence if too long ─────────────────────────────────
+    // Trim to complete sentence if too long
     if (isTF && text.length > 250) {
       const cut = text.substring(0, 247)
       const last = Math.max(cut.lastIndexOf('?'), cut.lastIndexOf('.'), cut.lastIndexOf('!'))
       text = last > 150 ? cut.substring(0, last + 1) : cut + '...'
     }
 
-    // ── CRITICAL: only append fillers/CTAs if text is a complete sentence ─────
-    // An incomplete sentence (ends mid-word, with comma, with em-dash, with " — ")
-    // must NEVER have a CTA bolted on. Drop it instead — better no reply than a broken one.
+    // Only append to complete sentences
     const complete = isCompleteSentence(text)
-
     if (!complete) {
-      // Try to salvage by trimming to last complete sentence
       const lastPunct = Math.max(text.lastIndexOf('?'), text.lastIndexOf('.'), text.lastIndexOf('!'))
       if (lastPunct > 30) {
         text = text.substring(0, lastPunct + 1).trim()
       } else {
-        // No salvageable sentence — mark for removal
         return { tone: r.tone || 'Reply', text: '' }
       }
     }
 
-    // ── Pad short but complete replies ───────────────────────────────────────
+    // Pad short replies
     if (text.length < 75 && isCompleteSentence(text)) {
       const fillers = [
-        " What\'s your take on that?",
+        " What's your take on that?",
         " What made you bring that up?",
-        " I\'m curious what you think.",
-        " Tell me something I wouldn\'t expect.",
+        " I'm curious what you think.",
+        " Tell me something I wouldn't expect.",
       ]
       for (const f of fillers) {
         const padded = text + f
-        if (padded.length >= 75 && (!isTF || padded.length <= 250)) {
-          text = padded
-          break
-        }
+        if (padded.length >= 75 && (!isTF || padded.length <= 250)) { text = padded; break }
       }
     }
 
-    // ── Add CTA only if reply has no question and ends cleanly ───────────────
+    // Add CTA if no question
     if (!text.includes('?') && isCompleteSentence(text)) {
       const ctas = [
-        " What\'s actually going on in your world right now?",
+        " What's actually going on in your world right now?",
         " What would you do differently if you could?",
-        " What\'s something people always get wrong about you?",
+        " What's something people always get wrong about you?",
         " What does that say about you, do you think?",
       ]
       for (const cta of ctas) {
         const withCta = text + cta
-        if (!isTF || withCta.length <= 250) {
-          text = withCta
-          break
-        }
+        if (!isTF || withCta.length <= 250) { text = withCta; break }
       }
     }
 
@@ -527,24 +325,23 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const message = ((body.message || '') + '').replace(/[\x00-\x1F\x7F-\x9F`]/g, ' ').trim()
+    const message     = ((body.message || '') + '').replace(/[\x00-\x1F\x7F-\x9F`]/g, ' ').trim()
     const pageContext = body.pageContext || {}
-    const platform = (pageContext.platform || 'generic').toString()
-    const context = (pageContext.conversationSummary || '').toString().substring(0, 2000)
-    const location = (pageContext.userLocation || '').toString()
+    const platform    = (pageContext.platform || 'generic').toString()
+    const context     = (pageContext.conversationSummary || '').toString().substring(0, 2000)
+    const location    = (pageContext.userLocation || '').toString()
 
-    // ── Fixed: extract previousTones, englishVariety and myName from request body
-    const previousTones: string[] = Array.isArray(body.previousTones) ? body.previousTones : []
-    const englishVariety: string = (body.englishVariety || 'AmEng').toString()
-    const myName: string | null = body.myName ? body.myName.toString() : null
+    const previousTones: string[]  = Array.isArray(body.previousTones) ? body.previousTones : []
+    const englishVariety: string   = (body.englishVariety || 'AmEng').toString()
+    const myName: string | null    = body.myName ? body.myName.toString() : null
 
     if (!message) {
       return NextResponse.json({ error: 'Message is required', replies: [] }, { status: 400, headers })
     }
 
-    // Handle re-engagement analysis
+    // Re-engagement
     if (message === 'REENGAGE_ANALYSIS') {
-      const prompt = `A woman needs 3 re-engagement messages to send a man who went quiet.
+      const reengagePrompt = `A woman needs 3 re-engagement messages to send a man who went quiet.
 
 Conversation: ${context || 'No history available'}
 
@@ -553,9 +350,10 @@ Write 3 trigger messages (50-150 chars each):
 2. Creates curiosity/mystery
 3. Warm gentle callback
 
-Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text":"message"},{"label":"label","text":"message"},{"label":"label","text":"message"}]}`
+Return ONLY valid JSON, no markdown:
+{"analysis":"why he went quiet","triggers":[{"label":"label","text":"message"},{"label":"label","text":"message"},{"label":"label","text":"message"}]}`
 
-      const raw = await generate('', prompt)
+      const raw = await generate(reengagePrompt)
       try {
         const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
         const parsed = JSON.parse(clean)
@@ -579,9 +377,9 @@ Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text"
     if (apiKeyHeader.startsWith('pro_')) userPlan = 'pro'
     else if (apiKeyHeader.startsWith('basic_')) userPlan = 'basic'
 
-    const { system, user } = buildPrompt(message, platform, context, location, userPlan, previousTones, englishVariety, myName)
-    const rawText = await generate(system, user)
-    const replies = parseReplies(rawText)
+    const prompt      = buildPrompt(message, platform, context, location, userPlan, previousTones, englishVariety, myName)
+    const rawText     = await generate(prompt)
+    const replies     = parseReplies(rawText)
     const finalReplies = postProcess(
       replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }],
       platform,
@@ -592,7 +390,7 @@ Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text"
       replies: finalReplies,
       remaining: 999,
       plan: userPlan,
-      modelUsed: 'gemini-2.5-flash'
+      modelUsed: 'groq/llama-3.3-70b'
     }, { headers })
 
   } catch (error: any) {
