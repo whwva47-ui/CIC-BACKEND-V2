@@ -36,7 +36,7 @@ async function generate(prompt: string): Promise<string> {
           model: google('gemini-2.0-flash'),
           prompt,
           temperature: 0.85,
-          maxOutputTokens: 900,
+          maxTokens: 900,
         }).then(r => {
           if (!r.text) throw new Error('Empty response')
           console.log('[CIC] Race winner: Gemini 2.0 Flash')
@@ -52,7 +52,7 @@ async function generate(prompt: string): Promise<string> {
           model: groq('llama-3.3-70b-versatile'),
           prompt,
           temperature: 0.78 + Math.random() * 0.19,
-          maxOutputTokens: 900,
+          maxTokens: 900,
         }).then(r => {
           if (!r.text) throw new Error('Empty response')
           console.log('[CIC] Race winner: Groq llama-3.3-70b')
@@ -82,7 +82,7 @@ async function generate(prompt: string): Promise<string> {
           model: google(model),
           prompt,
           temperature: 0.85,
-          maxOutputTokens: 900,
+          maxTokens: 900,
         })
         if (result.text) {
           console.log('[CIC] Gemini fallback success:', model)
@@ -104,7 +104,7 @@ async function generate(prompt: string): Promise<string> {
           model: groq(model),
           prompt,
           temperature: 0.78 + Math.random() * 0.19,
-          maxOutputTokens: 900,
+          maxTokens: 900,
         })
         if (result.text) {
           console.log('[CIC] Groq fallback success:', model)
