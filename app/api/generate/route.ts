@@ -1,8 +1,7 @@
-// CIC generate route v8.2.0 — Cerebras+Gemini race, Groq as final fallback
+// CIC generate route v8.4.0 — Groq+Gemini race, OpenRouter fallback, no Cerebras
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
-import { createOpenAI } from '@ai-sdk/openai'  // Cerebras uses OpenAI-compatible API
-import { createGroq } from '@ai-sdk/groq'       // kept as fallback
+import { createGroq } from '@ai-sdk/groq'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -19,36 +18,34 @@ export async function OPTIONS() {
 }
 
 // ─── AI Generation ────────────────────────────────────────────────────────────
-// generate() accepts system + user separately so Gemini gets proper role split
-// Groq/OpenRouter receive them merged — both work optimally this way
+// system prompt  → Gemini (role split) and OpenRouter (role split)
+// fullPrompt     → Groq (merged, Llama performs best this way)
 async function generate(system: string, user: string): Promise<string> {
   const errors: string[] = []
-  const fullPrompt = system + '\n\n' + user  // merged for non-Gemini providers
+  const fullPrompt = system + '\n\n' + user
 
-  const googleKey    = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
-  const cerebrasKey  = process.env.CEREBRAS_API_KEY
-  const groqKey      = process.env.GROQ_API_KEY
+  const groqKey        = process.env.GROQ_API_KEY
+  const googleKey      = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
+  const openrouterKey  = process.env.OPENROUTER_API_KEY
 
-  // ── 1. Race Cerebras vs Gemini — fastest wins ──────────────────────────────
-  // Cerebras: same Llama 3.3 70B as Groq, 2000+ tok/s, 1M tokens/day free
-  // Gemini: reliable fallback, 1500 req/day free, system/user split for quality
-  if (cerebrasKey || googleKey) {
+  // ── 1. Race: Groq (Llama 3.3 70B) vs Gemini 2.5 Flash ────────────────────
+  // Groq  — fastest inference, best conversational quality, Llama 3.3 70B
+  // Gemini — 1,500 req/day free, excellent with system/user split
+  // Promise.any() returns whichever resolves first; ignores the other
+  if (groqKey || googleKey) {
     const racers: Promise<string>[] = []
 
-    if (cerebrasKey) {
-      const cerebras = createOpenAI({
-        apiKey: cerebrasKey,
-        baseURL: 'https://api.cerebras.ai/v1',
-      })
+    if (groqKey) {
+      const groq = createGroq({ apiKey: groqKey })
       racers.push(
         generateText({
-          model: cerebras('llama3.3-70b'),
+          model: groq('llama-3.3-70b-versatile'),
           prompt: fullPrompt,
           temperature: 0.78 + Math.random() * 0.19,
           maxTokens: 900,
         }).then(r => {
           if (!r.text) throw new Error('Empty response')
-          console.log('[CIC] Race winner: Cerebras Llama-3.3-70b')
+          console.log('[CIC] Race winner: Groq llama-3.3-70b')
           return r.text
         })
       )
@@ -58,7 +55,7 @@ async function generate(system: string, user: string): Promise<string> {
       const google = createGoogleGenerativeAI({ apiKey: googleKey })
       racers.push(
         generateText({
-          model: google('gemini-2.0-flash'),
+          model: google('gemini-2.5-flash'),
           system,
           prompt: user,
           temperature: 0.92,
@@ -66,7 +63,7 @@ async function generate(system: string, user: string): Promise<string> {
           topP: 0.95,
         }).then(r => {
           if (!r.text) throw new Error('Empty response')
-          console.log('[CIC] Race winner: Gemini 2.0 Flash')
+          console.log('[CIC] Race winner: Gemini 2.5 Flash')
           return r.text
         })
       )
@@ -81,84 +78,7 @@ async function generate(system: string, user: string): Promise<string> {
     }
   }
 
-  // ── 2. Cerebras fallback models ────────────────────────────────────────────
-  if (cerebrasKey) {
-    const cerebras = createOpenAI({
-      apiKey: cerebrasKey,
-      baseURL: 'https://api.cerebras.ai/v1',
-    })
-    const cerebrasModels = ['llama3.1-8b']
-    for (const model of cerebrasModels) {
-      try {
-        const result = await generateText({
-          model: cerebras(model),
-          prompt: fullPrompt,
-          temperature: 0.78 + Math.random() * 0.19,
-          maxTokens: 900,
-        })
-        if (result.text) {
-          console.log('[CIC] Cerebras fallback success:', model)
-          return result.text
-        }
-      } catch (e: any) {
-        errors.push(`Cerebras/${model}: ${e?.message?.substring(0, 80)}`)
-      }
-    }
-  }
-
-  // ── 3. Gemini fallback models ──────────────────────────────────────────────
-  if (googleKey) {
-    const googleFallback = createGoogleGenerativeAI({ apiKey: googleKey })
-    const geminiModels = [
-      'gemini-1.5-pro-latest',
-      'gemini-1.5-flash-latest',
-    ]
-    for (const model of geminiModels) {
-      try {
-        const result = await generateText({
-          model: googleFallback(model),
-          system,
-          prompt: user,
-          temperature: 0.92,
-          maxTokens: 900,
-          topP: 0.95,
-        })
-        if (result.text) {
-          console.log('[CIC] Gemini fallback success:', model)
-          return result.text
-        }
-      } catch (e: any) {
-        errors.push(`Gemini/${model}: ${e?.message?.substring(0, 80)}`)
-      }
-    }
-  }
-
-  // ── 4. Groq as final fallback (kept for resilience) ────────────────────────
-  if (groqKey) {
-    const groq = createGroq({ apiKey: groqKey })
-    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama-3.1-8b-instant']
-    for (const model of groqModels) {
-      try {
-        const result = await generateText({
-          model: groq(model),
-          prompt: fullPrompt,
-          temperature: 0.78 + Math.random() * 0.19,
-          maxTokens: 900,
-        })
-        if (result.text) {
-          console.log('[CIC] Groq fallback success:', model)
-          return result.text
-        }
-      } catch (e: any) {
-        const status = e?.statusCode || e?.status || ''
-        errors.push(`Groq/${model}(${status}): ${e?.message?.substring(0, 80)}`)
-        if (status !== 429 && !e?.message?.includes('limit')) break
-      }
-    }
-  }
-
-  // ── 4. OpenRouter last resort ──────────────────────────────────────────────
-  const openrouterKey = process.env.OPENROUTER_API_KEY
+  // ── 2. OpenRouter — Llama 3.3 70B free, same quality as Groq ─────────────
   if (openrouterKey) {
     try {
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -166,6 +86,8 @@ async function generate(system: string, user: string): Promise<string> {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${openrouterKey}`,
+          'HTTP-Referer': 'https://cic-backend-v2-princes-projects-5a5b6cec.vercel.app',
+          'X-Title': 'CIC Backend',
         },
         body: JSON.stringify({
           model: 'meta-llama/llama-3.3-70b-instruct:free',
@@ -180,11 +102,73 @@ async function generate(system: string, user: string): Promise<string> {
       const data = await res.json()
       const text = data?.choices?.[0]?.message?.content
       if (text) {
-        console.log('[CIC] OpenRouter success')
+        console.log('[CIC] OpenRouter success: llama-3.3-70b')
         return text
       }
+      if (data?.error) errors.push(`OpenRouter: ${JSON.stringify(data.error).substring(0, 80)}`)
     } catch (e: any) {
       errors.push(`OpenRouter: ${e?.message?.substring(0, 80)}`)
+    }
+  }
+
+  // ── 3. Groq fallback — smaller model, much higher daily limit ─────────────
+  if (groqKey) {
+    const groq = createGroq({ apiKey: groqKey })
+    try {
+      const result = await generateText({
+        model: groq('llama-3.1-8b-instant'),
+        prompt: fullPrompt,
+        temperature: 0.78 + Math.random() * 0.19,
+        maxTokens: 900,
+      })
+      if (result.text) {
+        console.log('[CIC] Groq fallback: llama-3.1-8b')
+        return result.text
+      }
+    } catch (e: any) {
+      errors.push(`Groq/llama-3.1-8b: ${e?.message?.substring(0, 80)}`)
+    }
+  }
+
+  // ── 4. Gemini 2.5 Flash Lite fallback ─────────────────────────────────────
+  if (googleKey) {
+    const google = createGoogleGenerativeAI({ apiKey: googleKey })
+    try {
+      const result = await generateText({
+        model: google('gemini-2.5-flash-lite'),
+        system,
+        prompt: user,
+        temperature: 0.92,
+        maxTokens: 900,
+        topP: 0.95,
+      })
+      if (result.text) {
+        console.log('[CIC] Gemini fallback: gemini-2.5-flash-lite')
+        return result.text
+      }
+    } catch (e: any) {
+      errors.push(`Gemini/flash-lite: ${e?.message?.substring(0, 80)}`)
+    }
+  }
+
+  // ── 5. Gemini 2.5 Pro — highest quality safety net ────────────────────────
+  if (googleKey) {
+    const google = createGoogleGenerativeAI({ apiKey: googleKey })
+    try {
+      const result = await generateText({
+        model: google('gemini-2.5-pro'),
+        system,
+        prompt: user,
+        temperature: 0.92,
+        maxTokens: 900,
+        topP: 0.95,
+      })
+      if (result.text) {
+        console.log('[CIC] Gemini fallback: gemini-2.5-pro')
+        return result.text
+      }
+    } catch (e: any) {
+      errors.push(`Gemini/pro: ${e?.message?.substring(0, 80)}`)
     }
   }
 
@@ -558,7 +542,7 @@ Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text"
       replies: finalReplies,
       remaining: 999,
       plan: userPlan,
-      modelUsed: 'gemini-2.0-flash'
+      modelUsed: 'gemini-2.5-flash'
     }, { headers })
 
   } catch (error: any) {
