@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'  // Cerebras uses OpenAI-compatible API
 import { createGroq } from '@ai-sdk/groq'       // kept as fallback
-import { google } from '@ai-sdk/google'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 function cors() {
@@ -25,7 +25,7 @@ async function generate(system: string, user: string): Promise<string> {
   const errors: string[] = []
   const fullPrompt = system + '\n\n' + user  // merged for non-Gemini providers
 
-  const googleKey    = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
+  const googleKey    = process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
   const cerebrasKey  = process.env.CEREBRAS_API_KEY
   const groqKey      = process.env.GROQ_API_KEY
 
@@ -42,7 +42,7 @@ async function generate(system: string, user: string): Promise<string> {
       })
       racers.push(
         generateText({
-          model: cerebras('llama-3.3-70b'),
+          model: cerebras('llama3.3-70b'),
           prompt: fullPrompt,
           temperature: 0.78 + Math.random() * 0.19,
           maxTokens: 900,
@@ -55,6 +55,7 @@ async function generate(system: string, user: string): Promise<string> {
     }
 
     if (googleKey) {
+      const google = createGoogleGenerativeAI({ apiKey: googleKey })
       racers.push(
         generateText({
           model: google('gemini-2.0-flash'),
@@ -86,7 +87,7 @@ async function generate(system: string, user: string): Promise<string> {
       apiKey: cerebrasKey,
       baseURL: 'https://api.cerebras.ai/v1',
     })
-    const cerebrasModels = ['llama3.1-70b', 'llama3.1-8b']
+    const cerebrasModels = ['llama3.1-8b']
     for (const model of cerebrasModels) {
       try {
         const result = await generateText({
@@ -107,15 +108,15 @@ async function generate(system: string, user: string): Promise<string> {
 
   // ── 3. Gemini fallback models ──────────────────────────────────────────────
   if (googleKey) {
+    const googleFallback = createGoogleGenerativeAI({ apiKey: googleKey })
     const geminiModels = [
-      'gemini-2.5-flash-preview-05-20',
       'gemini-1.5-pro-latest',
       'gemini-1.5-flash-latest',
     ]
     for (const model of geminiModels) {
       try {
         const result = await generateText({
-          model: google(model),
+          model: googleFallback(model),
           system,
           prompt: user,
           temperature: 0.92,
@@ -135,7 +136,7 @@ async function generate(system: string, user: string): Promise<string> {
   // ── 4. Groq as final fallback (kept for resilience) ────────────────────────
   if (groqKey) {
     const groq = createGroq({ apiKey: groqKey })
-    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama-3.1-8b-instant']
     for (const model of groqModels) {
       try {
         const result = await generateText({
