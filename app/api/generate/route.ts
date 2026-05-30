@@ -1,8 +1,7 @@
-// CIC generate route v8.0.0 — fixed Gemini model + Groq fallback model
+// CIC generate route v8.1.0 — Gemini primary + Groq fallback
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
-import { createOpenAI } from '@ai-sdk/openai'
 import { google } from '@ai-sdk/google'
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -22,76 +21,128 @@ export async function OPTIONS() {
 async function generate(prompt: string): Promise<string> {
   const errors: string[] = []
 
-  // Try Groq with multiple models (if one hits daily limit, try next)
-  const groqKey = process.env.GROQ_API_KEY
-  if (groqKey) {
-    const groqModels = [
-      'llama-3.3-70b-versatile',
-      'llama-3.1-8b-instant',
-      'gemma2-9b-it',
-      'mixtral-8x7b-32768',
-    ]
-    const groq = createGroq({ apiKey: groqKey })
-    for (const model of groqModels) {
-      try {
-        const temp = 0.78 + Math.random() * 0.19
-        const result = await generateText({
-          model: groq(model),
+  const googleKey = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
+  const groqKey   = process.env.GROQ_API_KEY
+
+  // ── 1. Race Gemini vs Groq — fastest wins ────────────────────────────────
+  // Both are fired simultaneously. Whichever responds first is returned.
+  // If one fails (rate limit, quota) the other still wins cleanly.
+  if (googleKey || groqKey) {
+    const racers: Promise<string>[] = []
+
+    if (googleKey) {
+      racers.push(
+        generateText({
+          model: google('gemini-2.0-flash'),
           prompt,
-          temperature: temp,
+          temperature: 0.85,
           maxOutputTokens: 900,
+        }).then(r => {
+          if (!r.text) throw new Error('Empty response')
+          console.log('[CIC] Race winner: Gemini 2.0 Flash')
+          return r.text
         })
-        if (result.text) {
-          console.log('[CIC] Groq success with model:', model)
-          return result.text
-        }
-      } catch (e: any) {
-        const status = e?.statusCode || e?.status || ''
-        errors.push(`Groq/${model}(${status}): ${e?.message?.substring(0,80)}`)
-        console.warn('[CIC] Groq model failed:', model, status)
-        // Only try next model if rate limited — otherwise break
-        if (status !== 429 && !e?.message?.includes('Rate limit') && !e?.message?.includes('limit')) break
-      }
+      )
+    }
+
+    if (groqKey) {
+      const groq = createGroq({ apiKey: groqKey })
+      racers.push(
+        generateText({
+          model: groq('llama-3.3-70b-versatile'),
+          prompt,
+          temperature: 0.78 + Math.random() * 0.19,
+          maxOutputTokens: 900,
+        }).then(r => {
+          if (!r.text) throw new Error('Empty response')
+          console.log('[CIC] Race winner: Groq llama-3.3-70b')
+          return r.text
+        })
+      )
+    }
+
+    try {
+      // Promise.any returns the first one that resolves — ignores rejections
+      // unless ALL reject, in which case it throws an AggregateError
+      const winner = await Promise.any(racers)
+      if (winner) return winner
+    } catch (e: any) {
+      // Both failed — collect errors and fall through to individual fallbacks
+      errors.push(`Race failed: ${e?.message?.substring(0, 120)}`)
+      console.warn('[CIC] Both race candidates failed, trying fallbacks')
     }
   }
 
-  // Try Google Gemini — AI SDK v5 uses google() directly
-  const googleKey = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
+  // ── 2. Gemini fallback models (if 2.0-flash hit quota) ───────────────────
   if (googleKey) {
-    const geminiModels = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-pro-latest']
+    const geminiModels = ['gemini-1.5-flash-latest', 'gemini-1.5-pro-latest']
     for (const model of geminiModels) {
       try {
         const result = await generateText({
           model: google(model),
           prompt,
           temperature: 0.85,
-          maxOutputTokens: 800,
+          maxOutputTokens: 900,
         })
         if (result.text) {
-          console.log('[CIC] Gemini success with model:', model)
+          console.log('[CIC] Gemini fallback success:', model)
           return result.text
         }
       } catch (e: any) {
-        errors.push(`Gemini/${model}: ${e?.message?.substring(0,80)}`)
-        console.warn('[CIC] Gemini model failed:', model, e?.message?.substring(0,80))
+        errors.push(`Gemini/${model}: ${e?.message?.substring(0, 80)}`)
       }
     }
   }
 
-  // Try OpenAI last
-  const openaiKey = process.env.OPENAI_API_KEY
-  if (openaiKey) {
+  // ── 3. Groq fallback models (if 70b hit daily limit) ─────────────────────
+  if (groqKey) {
+    const groq = createGroq({ apiKey: groqKey })
+    const groqFallbacks = ['llama-3.1-8b-instant', 'gemma2-9b-it', 'mixtral-8x7b-32768']
+    for (const model of groqFallbacks) {
+      try {
+        const result = await generateText({
+          model: groq(model),
+          prompt,
+          temperature: 0.78 + Math.random() * 0.19,
+          maxOutputTokens: 900,
+        })
+        if (result.text) {
+          console.log('[CIC] Groq fallback success:', model)
+          return result.text
+        }
+      } catch (e: any) {
+        const status = e?.statusCode || e?.status || ''
+        errors.push(`Groq/${model}(${status}): ${e?.message?.substring(0, 80)}`)
+        if (status !== 429 && !e?.message?.includes('limit')) break
+      }
+    }
+  }
+
+  // ── 4. OpenRouter as last resort ──────────────────────────────────────────
+  const openrouterKey = process.env.OPENROUTER_API_KEY
+  if (openrouterKey) {
     try {
-      const openai = createOpenAI({ apiKey: openaiKey })
-      const result = await generateText({
-        model: openai('gpt-4o-mini'),
-        prompt,
-        temperature: 0.85,
-        maxOutputTokens: 800,
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openrouterKey}`,
+        },
+        body: JSON.stringify({
+          model: 'meta-llama/llama-3.3-70b-instruct:free',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.85,
+          max_tokens: 900,
+        }),
       })
-      if (result.text) return result.text
+      const data = await res.json()
+      const text = data?.choices?.[0]?.message?.content
+      if (text) {
+        console.log('[CIC] OpenRouter success')
+        return text
+      }
     } catch (e: any) {
-      errors.push(`OpenAI: ${e?.message?.substring(0,80)}`)
+      errors.push(`OpenRouter: ${e?.message?.substring(0, 80)}`)
     }
   }
 
@@ -101,13 +152,11 @@ async function generate(prompt: string): Promise<string> {
 // ─── Parse AI response ────────────────────────────────────────────────────────
 function parseReplies(text: string): Array<{tone: string, text: string}> {
   try {
-    // Remove markdown code fences
     const clean = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
     const parsed = JSON.parse(clean)
     if (Array.isArray(parsed.replies)) return parsed.replies
   } catch {}
 
-  // Try to find JSON anywhere in response
   const match = text.match(/\{[\s\S]*"replies"[\s\S]*?\}/)
   if (match) {
     try {
@@ -120,7 +169,7 @@ function parseReplies(text: string): Array<{tone: string, text: string}> {
 }
 
 // ─── Build prompt ─────────────────────────────────────────────────────────────
-function buildPrompt(message: string, platform: string, context: string, location: string, plan: string = 'trial', previousTones: string[] = []): string {
+function buildPrompt(message: string, platform: string, context: string, location: string, plan: string = 'trial', previousTones: string[] = [], englishVariety: string = 'AmEng', myName: string | null = null): string {
   const isTF = platform === 'chathomebase' || platform === 'textingfactory'
   const charRule = isTF
     ? 'Each reply: 80-260 chars. Under 80 = too thin, add warmth and substance. Over 260 = trim at the last complete thought.'
@@ -129,6 +178,18 @@ function buildPrompt(message: string, platform: string, context: string, locatio
   const isPhoto = /SENT A PHOTO|CLIENT SENT A PHOTO|\[photo\]/i.test(message)
   const isMeetupRequest = /meet|tonight|today|come over|your place|my place|hotel|address|where do you live|visit/i.test(message)
   const isContactRequest = /phone|number|whatsapp|instagram|snap|telegram|kik|signal|email|contact|off here|off this/i.test(message)
+
+  // English variety instruction
+  const engVarietyMap: Record<string, string> = {
+    AmEng: 'American English — use American spelling (color, favorite, realize, center), American idioms and phrasing. This is the default.',
+    BrEng: 'British English — use British spelling (colour, favourite, realise, centre), British idioms and phrasing.',
+    AuEng: 'Australian English — use Australian spelling and idioms. Relaxed, warm, direct. Occasional Australian expressions where natural.',
+  }
+  const engInstruction = engVarietyMap[englishVariety] || engVarietyMap['AmEng']
+
+  const nameNote = myName
+    ? `Her name is ${myName}. She may use it naturally if the moment calls for it, but she does not force it.`
+    : ''
 
   const locationNote = location
     ? `LOCATION: If he asks where she is — she lives in a real city approximately 35 minutes from "${location}". She gives that city name naturally, as if she has always lived there. She never gives a street, neighborhood, or specific address. She never says she is "private about her location" — that sounds evasive. She just tells him the city and moves on naturally.`
@@ -163,20 +224,20 @@ She does NOT:
 - Give a vague non-answer — makes her seem evasive and uninterested
 - Apologize excessively — makes her seem guilty
 - Flatly refuse — kills the energy
+- Promise or suggest a future meetup — she is not meeting anyone
 
 She DOES:
 - Give a real, specific, believable reason that has texture and life in it
 - Make him feel like she genuinely wishes things were different
-- Keep the desire alive — she wants this, just not right now
-- Turn it into something that deepens the connection rather than ending it
+- Keep the desire alive — she wants this connection, just not in person
+- Turn it into something that deepens the conversation rather than ending it
+- Redirect warmly toward getting to know each other better right here
 
 Real reasons she can draw from (choose the most believable for this conversation):
-1. She is going through something — a difficult period at work, a family situation she is navigating, something that has her emotionally not in the right place to be meeting people, even though she wants to
-2. She just moved, or is about to move, and her life is genuinely in transition — she is not settled enough to be starting something
-3. She had a bad experience meeting someone too fast before — not in a dramatic way, just a lesson she learned about herself, that she needs to know someone properly first
+1. She is going through something — a difficult period at work, a family situation she is navigating, something that has her emotionally not in the right place
+2. She just moved, or is about to move, and her life is genuinely in transition
+3. She had a bad experience meeting someone too fast before — a lesson she learned about herself
 4. She has a demanding schedule right now — something real and specific, not vague "I'm busy"
-
-After the reason: she redirects warmly. She makes him feel wanted. She gives him something to look forward to in the conversation right now.
 ` : ''
 
   const contactBlock = isContactRequest ? `
@@ -187,6 +248,9 @@ She makes him feel like getting her number would be worth the wait. She does not
 ` : ''
 
   return `She is a real woman in a real conversation. She is intelligent, warm, and self-possessed. She is genuinely interested in this man. She has a life, opinions, and feelings of her own. She texts the way she thinks — naturally, directly, without performing.
+
+LANGUAGE: She writes in ${engInstruction}
+${nameNote}
 
 She is not on a platform. She is not playing a role. She is not doing a job. She is a woman who finds this man interesting and is engaging with him the way she would with anyone she actually wants to talk to.
 
@@ -246,6 +310,7 @@ WHAT SHE NEVER SAYS:
 "Let's keep this going" — sounds like a platform
 "I feel like we have a connection" — too fast, too performed
 She also never mentions fantasy, content, subscription, or platform in any form.
+She never promises or suggests meeting in person.
 
 THE CTA:
 Every reply ends with something that makes him want to respond immediately.
@@ -265,16 +330,13 @@ Return ONLY valid JSON, nothing else:
 {"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}`
 }
 
-
 // ─── Post-process replies ─────────────────────────────────────────────────────
 function postProcess(replies: Array<{tone: string, text: string}>, platform: string, message: string): Array<{tone: string, text: string}> {
   const isTF = platform === 'chathomebase' || platform === 'textingfactory'
-  
+
   return replies.map(r => {
     let text = (r.text || '').trim()
 
-    // Strip banned repetitive CTA phrases
-    // Only strip if these phrases appear as standalone endings
     text = text
       .replace(/[,.]?\s*okay[,]?\s*your turn[,.]?\s*be honest with me\??\s*$/i, '')
       .replace(/[,.]?\s*show me your fantasies\.?\s*$/i, '')
@@ -300,14 +362,12 @@ function postProcess(replies: Array<{tone: string, text: string}>, platform: str
     text = text.replace(/^(that sounds amazing|that's so sweet|aww|how sweet|i love that|wow that's|oh that's)[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    // TF max 250 chars
     if (isTF && text.length > 250) {
       const cut = text.substring(0, 247)
       const last = Math.max(cut.lastIndexOf('?'), cut.lastIndexOf('.'), cut.lastIndexOf('!'))
       text = last > 150 ? cut.substring(0, last + 1) : cut + '...'
     }
 
-    // Min 75 chars
     if (text.length < 75) {
       const fillers = [
         " — honestly I need to hear more about that?",
@@ -324,7 +384,6 @@ function postProcess(replies: Array<{tone: string, text: string}>, platform: str
       }
     }
 
-    // Ensure CTA
     if (!text.includes('?')) {
       const ctas = [
         " — okay your turn, be honest with me?",
@@ -357,6 +416,11 @@ export async function POST(req: Request) {
     const context = (pageContext.conversationSummary || '').toString().substring(0, 2000)
     const location = (pageContext.userLocation || '').toString()
 
+    // ── Fixed: extract previousTones, englishVariety and myName from request body
+    const previousTones: string[] = Array.isArray(body.previousTones) ? body.previousTones : []
+    const englishVariety: string = (body.englishVariety || 'AmEng').toString()
+    const myName: string | null = body.myName ? body.myName.toString() : null
+
     if (!message) {
       return NextResponse.json({ error: 'Message is required', replies: [] }, { status: 400, headers })
     }
@@ -369,7 +433,7 @@ Conversation: ${context || 'No history available'}
 
 Write 3 trigger messages (50-150 chars each):
 1. References something specific from their chat
-2. Creates curiosity/mystery  
+2. Creates curiosity/mystery
 3. Warm gentle callback
 
 Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text":"message"},{"label":"label","text":"message"},{"label":"label","text":"message"}]}`
@@ -392,14 +456,13 @@ Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text"
       }
     }
 
-    // Build prompt and generate
-    // Determine plan from API key or request
+    // Determine plan
     let userPlan = 'trial'
     const apiKeyHeader = req.headers.get('X-API-Key') || req.headers.get('x-api-key') || ''
     if (apiKeyHeader.startsWith('pro_')) userPlan = 'pro'
     else if (apiKeyHeader.startsWith('basic_')) userPlan = 'basic'
-    
-    const prompt = buildPrompt(message, platform, context, location, userPlan, previousTones)
+
+    const prompt = buildPrompt(message, platform, context, location, userPlan, previousTones, englishVariety, myName)
     const rawText = await generate(prompt)
     const replies = parseReplies(rawText)
     const finalReplies = postProcess(
@@ -411,8 +474,8 @@ Return ONLY: {"analysis":"why he went quiet","triggers":[{"label":"label","text"
     return NextResponse.json({
       replies: finalReplies,
       remaining: 999,
-      plan: 'pro',
-      modelUsed: 'groq/llama-3.3-70b'
+      plan: userPlan,
+      modelUsed: 'gemini-2.0-flash'
     }, { headers })
 
   } catch (error: any) {
