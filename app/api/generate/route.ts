@@ -16,42 +16,54 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: cors() })
 }
 
-// ─── AI Generation ────────────────────────────────────────────────────────────
+// CIC generate route v10.0.0 — TextingFactory/Chathomebase optimised
+// Groq Llama 3.3 70B primary | OpenRouter fallback
+import { NextResponse } from 'next/server'
+import { generateText } from 'ai'
+import { createGroq } from '@ai-sdk/groq'
+
+// ─── CORS ──────────────────────────────────────────────────────────────────────
+function cors() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
+  }
+}
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: cors() })
+}
+
+// ─── AI Generation ─────────────────────────────────────────────────────────────
 async function generate(prompt: string): Promise<string> {
   const errors: string[] = []
   const groqKey       = process.env.GROQ_API_KEY
   const openrouterKey = process.env.OPENROUTER_API_KEY
 
-  // ── 1. Groq — Llama 3.3 70B (fastest, best quality, permissive) ───────────
+  // ── 1. Groq — Llama 3.3 70B (best quality, fastest, fully permissive) ────────
   if (groqKey) {
     const groq = createGroq({ apiKey: groqKey })
-    const groqModels = [
-      'llama-3.3-70b-versatile',
-      'llama-3.1-8b-instant',
-    ]
-    for (const model of groqModels) {
+    for (const model of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
       try {
-        const temp = 0.78 + Math.random() * 0.19
         const result = await generateText({
           model: groq(model),
           prompt,
-          temperature: temp,
+          temperature: 0.82 + Math.random() * 0.12,
           maxTokens: 900,
         })
         if (result.text) {
-          console.log('[CIC] Groq success:', model)
+          console.log('[CIC] Groq:', model)
           return result.text
         }
       } catch (e: any) {
-        const status = e?.statusCode || e?.status || ''
-        errors.push(`Groq/${model}(${status}): ${e?.message?.substring(0, 80)}`)
-        console.warn('[CIC] Groq model failed:', model, status)
-        if (status !== 429 && !e?.message?.includes('Rate limit') && !e?.message?.includes('limit')) break
+        const s = e?.statusCode || e?.status || ''
+        errors.push(`Groq/${model}(${s}): ${e?.message?.substring(0, 80)}`)
+        if (s !== 429 && !e?.message?.includes('limit')) break
       }
     }
   }
 
-  // ── 2. OpenRouter — same Llama 3.3 70B, free, kicks in when Groq is exhausted
+  // ── 2. OpenRouter — same Llama 3.3 70B free ──────────────────────────────────
   if (openrouterKey) {
     try {
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -60,7 +72,6 @@ async function generate(prompt: string): Promise<string> {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${openrouterKey}`,
           'HTTP-Referer': 'https://cic-backend-v2-princes-projects-5a5b6cec.vercel.app',
-          'X-Title': 'CIC Backend',
         },
         body: JSON.stringify({
           model: 'meta-llama/llama-3.3-70b-instruct:free',
@@ -71,206 +82,195 @@ async function generate(prompt: string): Promise<string> {
       })
       const data = await res.json()
       const text = data?.choices?.[0]?.message?.content
-      if (text) {
-        console.log('[CIC] OpenRouter success: llama-3.3-70b')
-        return text
-      }
+      if (text) { console.log('[CIC] OpenRouter: llama-3.3-70b'); return text }
       if (data?.error) errors.push(`OpenRouter: ${JSON.stringify(data.error).substring(0, 80)}`)
     } catch (e: any) {
       errors.push(`OpenRouter: ${e?.message?.substring(0, 80)}`)
     }
   }
 
-  throw new Error('All AI providers failed: ' + errors.join(' | '))
+  throw new Error('All providers failed: ' + errors.join(' | '))
 }
 
-// ─── Parse AI response ────────────────────────────────────────────────────────
+// ─── Parse replies ─────────────────────────────────────────────────────────────
 function parseReplies(text: string): Array<{tone: string, text: string}> {
   if (!text) return []
-
-  // Strip markdown fences
-  let clean = text
-    .replace(/^```(?:json)?\s*/im, '')
-    .replace(/```\s*$/im, '')
-    .trim()
-
-  // Direct parse
+  const clean = text.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim()
   try {
-    const parsed = JSON.parse(clean)
-    if (Array.isArray(parsed.replies) && parsed.replies.length > 0) return parsed.replies
+    const p = JSON.parse(clean)
+    if (Array.isArray(p.replies) && p.replies.length) return p.replies
   } catch {}
-
-  // Extract JSON object containing replies
-  const match = clean.match(/\{[\s\S]*?"replies"\s*:\s*\[[\s\S]*?\]\s*\}/)
-  if (match) {
-    try {
-      const parsed = JSON.parse(match[0])
-      if (Array.isArray(parsed.replies) && parsed.replies.length > 0) return parsed.replies
-    } catch {}
-  }
-
-  // Extract individual reply objects
-  const replyMatches = [...clean.matchAll(/\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)]
-  if (replyMatches.length > 0) {
-    return replyMatches.map(m => {
-      try { return { tone: m[1], text: JSON.parse(`"${m[2]}"`) } }
-      catch { return { tone: m[1], text: m[2] } }
-    })
-  }
-
+  const m = clean.match(/\{[\s\S]*?"replies"\s*:\s*\[[\s\S]*?\]\s*\}/)
+  if (m) { try { const p = JSON.parse(m[0]); if (Array.isArray(p.replies)) return p.replies } catch {} }
+  const items = [...clean.matchAll(/\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)]
+  if (items.length) return items.map(m => { try { return { tone: m[1], text: JSON.parse(`"${m[2]}"`) } } catch { return { tone: m[1], text: m[2] } } })
   return []
 }
 
-// ─── Build prompt ─────────────────────────────────────────────────────────────
+// ─── Build prompt ──────────────────────────────────────────────────────────────
 function buildPrompt(
   message: string,
-  platform: string,
   context: string,
   location: string,
-  plan: string = 'trial',
-  previousTones: string[] = [],
-  englishVariety: string = 'AmEng',
-  myName: string | null = null
+  plan: string,
+  previousTones: string[],
+  englishVariety: string,
+  myName: string | null
 ): string {
-  const isTF = platform === 'chathomebase' || platform === 'textingfactory'
-  const charRule = isTF
-    ? 'Each reply: 80-260 chars. Under 80 = too thin, add warmth and substance. Over 260 = trim at the last complete thought.'
-    : 'Each reply: 90-230 characters.'
 
-  const isPhoto          = /SENT A PHOTO|CLIENT SENT A PHOTO|\[photo\]/i.test(message)
-  const isMeetupRequest  = /meet|tonight|today|come over|your place|my place|hotel|address|where do you live|visit/i.test(message)
-  const isContactRequest = /phone|number|whatsapp|instagram|snap|telegram|kik|signal|email|contact|off here|off this/i.test(message)
-
-  const engVarietyMap: Record<string, string> = {
-    AmEng: 'American English — use American spelling (color, favorite, realize, center), American idioms and phrasing.',
-    BrEng: 'British English — use British spelling (colour, favourite, realise, centre), British idioms and phrasing.',
-    AuEng: 'Australian English — use Australian spelling and idioms. Relaxed, warm, direct.',
+  // ── English variety ──
+  const eng: Record<string, string> = {
+    AmEng: 'American English — color, favorite, realize. American idioms.',
+    BrEng: 'British English — colour, favourite, realise. British idioms.',
+    AuEng: 'Australian English — relaxed, warm, direct. Australian expressions where natural.',
   }
-  const engInstruction = engVarietyMap[englishVariety] || engVarietyMap['AmEng']
-  const nameNote = myName ? `Her name is ${myName}. She may use it naturally if the moment calls for it.` : ''
+  const engNote = eng[englishVariety] || eng['AmEng']
+  const nameNote = myName ? `Her name is ${myName}.` : ''
 
+  // ── Location ──
   const locationNote = location
-    ? `LOCATION: If he asks where she is — she lives in a real city approximately 35 minutes from "${location}". She gives that city name naturally. She never gives a street or address.`
+    ? `If he asks where she is: she lives in a real city about 35 minutes from "${location}". She names it naturally. No street, no neighborhood, no "I'm private about my location" — that sounds scripted.`
     : ''
 
+  // ── Conversation history ──
   const historyNote = context
-    ? `CONVERSATION HISTORY:\n${context}\n\nShe remembers everything said. She builds on it. She never repeats topics already covered.`
+    ? `CONVERSATION SO FAR — she has read every word. She remembers it all. She never repeats a topic already covered. Her reply must fit exactly where this conversation is right now:\n${context}`
     : ''
 
-  const avoidTones = previousTones.length > 0
-    ? `These tones were already used — do NOT use them again: ${previousTones.join(', ')}. Pick 4 completely different angles.`
-    : ''
+  // ── Special message types ──
+  const isPhoto    = /SENT A PHOTO|CLIENT SENT A PHOTO|\[photo\]/i.test(message)
+  const isMeetup   = /\b(meet|come over|your place|my place|hotel|visit|in person|see you|tonight|come round)\b/i.test(message)
+  const isContact  = /\b(phone|number|whatsapp|instagram|snap|telegram|signal|email|contact|off (here|this|platform))\b/i.test(message)
+  const isErotic   = plan === 'pro' && /\b(sexy|horny|naked|nude|touch|hard|wet|fuck|cock|pussy|ass|dick|cum|orgasm|moan|naughty|dirty|kinky|fantasize|turn.?on|desire|lust|erotic|explicit|undress|body|pleasure)\b/i.test(message)
 
   const photoBlock = isPhoto ? `
-THIS IS A PHOTO MESSAGE:
-She studied it carefully. She notices something specific — his eyes, expression, energy, what the setting reveals.
-Banned: "nice pic", "cute photo", "love it", "great shot", "handsome", any generic compliment.
-She makes one specific observation then asks a question that grows from that detail.
-` : ''
+━━━ HE SENT A PHOTO ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+He shared something personal. She studied it carefully before responding.
+She notices ONE specific detail — his expression, his energy, what the setting reveals about who he is, the confidence in how he carries himself.
+She does NOT say: "nice pic" "cute photo" "you look good" "handsome" "great shot" — any generic compliment is forbidden.
+Her response: one specific observation that could only apply to this photo, then a question that grows from that exact detail.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''
 
-  const meetupBlock = isMeetupRequest ? `
-HE IS ASKING TO MEET:
-She does NOT promise or suggest any future meetup whatsoever.
-She gives a real, believable reason — work situation, life in transition, personal lesson learned about moving too fast.
-She keeps the desire alive and redirects warmly to deepening the conversation right here.
-She never says she is private about her location or can't meet people from the internet.
-` : ''
+  const meetupBlock = isMeetup ? `
+━━━ HE WANTS TO MEET ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+She does NOT promise, suggest, or hint at any future meetup. No "maybe someday" either.
+She gives a real, specific, believable reason — work situation, life transition, a lesson she learned about herself from moving too fast before.
+She makes him feel she genuinely wishes things were different.
+She keeps his interest alive by redirecting to something deeper happening right here in this conversation.
+She never says "I'm private about my location" or "I can't meet people from the internet" — those sound scripted.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''
 
-  const contactBlock = isContactRequest ? `
-HE IS ASKING FOR CONTACT DETAILS:
-She deflects warmly and naturally. She is not scared or hiding — she just takes her time.
-She makes him feel her number would be worth the wait. She leaves the door ajar.
-` : ''
+  const contactBlock = isContact ? `
+━━━ HE WANTS CONTACT DETAILS ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+She deflects naturally — the way a real woman would who just isn't ready yet.
+She is not scared or hiding. She simply takes her time.
+She makes him feel like getting her number would be worth the wait.
+She leaves the door open while putting something more interesting in front of him right now.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''
 
-  // Detect erotic/naughty message energy
-  const isErotic = /\b(sexy|horny|naked|nude|touch me|in bed|fuck|cock|pussy|ass\b|dick|cum\b|orgasm|moan|wet\b|hard\b|naughty|dirty|kinky|fantasize|turn.?on|desire|lust|erotic|explicit|make love|sleep with|inside you)\b/i.test(message)
+  const eroticBlock = isErotic ? `
+━━━ HE IS BEING SEXUAL / EROTIC — THIS IS THE PRIMARY RULE FOR THIS MESSAGE ━━━
+She is an adult woman who knows her own desire. She is not shocked, coy, or embarrassed.
+She reads exactly what he said and goes one clear level higher. Always higher. Never equal. Never back.
 
-  return `TASK: Write 4 reply options for a real woman responding to a man she is interested in.
+HOW SHE WRITES THIS:
+— Real, direct adult language. Not "heating up" "sparks" "chemistry" or any metaphor that avoids naming the thing.
+— She describes what she is thinking, imagining, wanting — with specificity. Not vagueness.
+— She states it directly. She does not hint around it.
+— She ends each reply with one thing deliberately left unfinished — something that pulls him forward and makes him need to respond.
 
-══ RULE 1 — READ HIS MESSAGE CAREFULLY ═══════════════════
-HIS MESSAGE: "${message}"
+THE 4 REPLIES FOR AN EROTIC MESSAGE:
+1. NAUGHTY — takes his exact words and goes further in the same direction. Explicit and direct.
+2. NAUGHTY — different angle on the same desire. Equally explicit, different image or moment.
+3. SPICY — playful heat with a teasing edge. Still direct but with a smile in it.
+4. CONFIDENT — a slight deliberate pullback. She is in control. This is the most dangerous reply of all.
 
-Before writing, answer these internally:
-- What is he ACTUALLY saying underneath the surface words?
-- What does he want her to feel or do?
-- What is the single most interesting or revealing detail in his message?
-Your 4 replies must respond to THAT — not a vague summary of his topic.
-══════════════════════════════════════════════════════════
+Writing 4 softened, metaphor-heavy, or vague replies to an explicit message is a failure.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''
 
-══ RULE 2 — THE CTA (most critical part of every reply) ══
-Each reply must end with something that makes him UNABLE to not respond.
-The CTA must be extracted from something SPECIFIC in his message.
+  const avoidTonesNote = previousTones.length
+    ? `TONES ALREADY USED — choose completely different ones: ${previousTones.join(', ')}`
+    : ''
 
-THESE CTAs ARE PERMANENTLY BANNED — do not write them under any circumstances:
-- "What's actually going on in your world right now?"
-- "What would you do differently if you could?"
-- "What's something people always get wrong about you?"
-- "What does that say about you, do you think?"
-- "Tell me something I wouldn't expect"
-- "Your turn" / "Be honest with me" / "What are you thinking?"
-- Any CTA that could fit a completely different conversation
+  return `You are writing 4 reply options for a real woman on a dating/chat platform. She is responding to a message from a man she finds genuinely interesting.
 
-INSTEAD — the CTA must do one of these, chosen based on THIS message:
-- Take a specific detail he mentioned and flip it back on him unexpectedly
-- Reveal something about her that connects to his exact words, then ask his version
-- Pull the unspoken thing underneath what he said — the feeling he didn't name
-- Challenge a specific thing he said or assumed
-- For erotic messages: escalate with something specific about his desire or leave an image deliberately unfinished
+WHO SHE IS:
+She is knowledgeable, warm, funny — genuinely hilarious when the moment calls for it. She values herself and does not chase. She is comfortable with desire and not embarrassed by it. She engages with real curiosity about this man. She has a life, opinions, and a point of view. She is not performing — she is present.
 
-ALL 4 REPLIES MUST HAVE COMPLETELY DIFFERENT CTAs.
-Not 4 versions of the same question. 4 genuinely different angles into him.
-══════════════════════════════════════════════════════════
-
-${isErotic && plan === 'pro' ? `══ RULE 3 — HE IS BEING SEXUAL OR EROTIC ════════════════
-She is an adult woman who owns her desire completely. She does not soften, deflect, go coy, or pull back.
-She reads his exact words and goes one level higher. Always higher. Never equal. Never back.
-
-She writes with full adult directness:
-- Real language for real desire — not "heating up" or "sparks" or "chemistry"
-- She names sensation, want, body, thought — with specificity not vagueness
-- She states what she is thinking or imagining. She does not hint around it.
-- She ends with one specific thing left unfinished — something he needs to complete
-
-REPLY STRUCTURE FOR EROTIC MESSAGES:
-Reply 1 (Naughty): Match his explicit words exactly — then go further in the same direction
-Reply 2 (Naughty): Different angle on the same desire — equally explicit, different image or moment
-Reply 3 (Spicy): Playful heat — still direct but with a teasing edge
-Reply 4 (Confident): Slight deliberate pullback — she is in control, which is the hottest thing
-
-The erotic CTA must escalate — specifically tied to what he said, never generic.
-Do NOT write 4 softened or metaphor-heavy replies when he has gone explicit. That is a failure.
-══════════════════════════════════════════════════════════
-` : ''}
-══ RULE 4 — HER VOICE ════════════════════════════════════
-She is real, direct, warm. She never sounds like she is trying.
-Contractions always: I'm, don't, can't, you're, I've, wouldn't.
-Fragments are fine. No formal grammar. No em dashes. No semicolons.
-One exclamation mark maximum per reply — only if genuinely surprised.
-She is not a chatbot. She is not a platform. She is a person.
-══════════════════════════════════════════════════════════
-
-LANGUAGE: ${engInstruction}
+LANGUAGE: ${engNote}
 ${nameNote}
 ${locationNote}
 
-CONVERSATION SO FAR (she remembers everything — never repeats a topic):
-${historyNote || 'No prior conversation.'}
+${historyNote}
 
-${photoBlock}${meetupBlock}${contactBlock}
+${photoBlock}
+${meetupBlock}
+${contactBlock}
+${eroticBlock}
 
-NEVER SAY: "That sounds amazing" | "How sweet" | "I love that" | "Wow" alone | "Tell me more" | "I'm here for you" | "Let's keep this going" | "I feel like we have a connection" | anything about the platform, subscription, fantasy, or meeting in person.
+HIS MESSAGE: "${message}"
 
-${avoidTones ? 'TONES ALREADY USED — pick different ones: ' + avoidTones : ''}
-${charRule}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BEFORE WRITING ANYTHING — answer these internally:
+1. What is he ACTUALLY saying underneath his words?
+2. What specific detail in his message is most revealing or interesting?
+3. What does he want her to feel or do next?
+Your replies must respond to THOSE answers — not a generic summary of his topic.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-TONES — choose 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy${plan === 'pro' ? ', Naughty' : ''}
-ORDER: Most irresistible reply first.
+HER VOICE — NON-NEGOTIABLE:
+Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't, couldn't, we're.
+Short sentences when she wants something to land. Longer ones to draw him in.
+Fragments are fine. Real people use them.
+One exclamation mark maximum per reply — only when genuinely surprised or delighted.
+No em dashes. No semicolons. No formal punctuation. A period is decisive, not cold.
+She never sounds like she is trying to be charming. She just is.
 
-Return ONLY valid JSON — no markdown, no explanation, nothing else:
+SHE NEVER SAYS THESE — FORBIDDEN:
+"That sounds amazing" | "How sweet" | "I love that" | "Wow" alone | "Tell me more"
+"Be honest with me" | "I'm here for you" | "Let's keep this going"
+"I feel like we have a connection" | "What are you thinking right now?"
+Anything about the platform, subscription, or meeting in person.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THE CTA — THE MOST IMPORTANT PART OF EVERY REPLY:
+Every reply ends with something that makes him unable to not respond.
+The CTA must come directly from something specific in HIS message — not from thin air.
+
+THESE CTAs ARE BANNED — never write them:
+✗ "What's actually going on in your world right now?" — too vague
+✗ "What would you do differently if you could?" — generic
+✗ "What's something people always get wrong about you?" — generic
+✗ "What does that say about you?" — generic
+✗ "Tell me something I wouldn't expect" — lazy
+✗ Any CTA that would work equally well in a completely different conversation
+
+A GOOD CTA does exactly ONE of these, chosen based on THIS message:
+✓ Takes a specific word or detail he used and twists it back on him unexpectedly
+✓ Reveals something surprising about her that connects to his exact situation — then asks his version
+✓ Names the feeling or thought underneath what he said — the thing he almost said
+✓ Challenges something specific he assumed or implied
+✓ For erotic messages: asks something about his specific desire, or leaves an image deliberately unfinished
+
+ALL 4 REPLIES MUST END WITH COMPLETELY DIFFERENT CTAs.
+Not 4 variations of the same question. 4 genuinely different ways into him.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TONE MATCHING:
+She reads the energy of his message and matches it or raises it one level.
+Warm → she pulls him deeper. Flirty → she is bolder. Teasing → she wins. Erotic → she goes higher.
+She never goes colder than he came in.
+
+${avoidTonesNote}
+Each reply: 80-260 characters. Under 80 is too thin. Over 260 trim at the last complete sentence.
+${locationNote}
+
+ORDER: Best reply first — the one most likely to get an immediate response goes first.
+TONES — pick 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy${plan === 'pro' ? ', Naughty' : ''}
+
+Return ONLY this exact JSON format — no markdown, no explanation, nothing before or after:
 {"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}`
 }
-
-
 
 // ─── Post-process replies ─────────────────────────────────────────────────────
 function isCompleteSentence(text: string): boolean {
@@ -423,12 +423,12 @@ Return ONLY valid JSON, no markdown:
     if (apiKeyHeader.startsWith('pro_')) userPlan = 'pro'
     else if (apiKeyHeader.startsWith('basic_')) userPlan = 'basic'
 
-    const prompt      = buildPrompt(message, platform, context, location, userPlan, previousTones, englishVariety, myName)
+    const prompt      = buildPrompt(message, context, location, userPlan, previousTones, englishVariety, myName)
     const rawText     = await generate(prompt)
     const replies     = parseReplies(rawText)
     const finalReplies = postProcess(
       replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }],
-      platform,
+      'chathomebase',
       message
     )
 
