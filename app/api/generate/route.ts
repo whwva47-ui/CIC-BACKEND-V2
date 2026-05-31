@@ -1,4 +1,4 @@
-// CIC generate route v10.0.0 — TextingFactory/Chathomebase optimised
+// CIC generate route v10.0.0 - TextingFactory/Chathomebase optimised
 // Groq Llama 3.3 70B primary | OpenRouter fallback
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
@@ -31,10 +31,7 @@ async function generate(prompt: string): Promise<string> {
           temperature: 0.82 + Math.random() * 0.12,
           maxTokens: 900,
         })
-        if (result.text) {
-          console.log('[CIC] Groq:', model)
-          return result.text
-        }
+        if (result.text) { console.log('[CIC] Groq:', model); return result.text }
       } catch (e: any) {
         const s = e?.statusCode || e?.status || ''
         errors.push(`Groq/${model}(${s}): ${e?.message?.substring(0, 80)}`)
@@ -74,17 +71,9 @@ async function generate(prompt: string): Promise<string> {
 function parseReplies(text: string): Array<{tone: string, text: string}> {
   if (!text) return []
   const clean = text.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim()
-  try {
-    const p = JSON.parse(clean)
-    if (Array.isArray(p.replies) && p.replies.length) return p.replies
-  } catch {}
+  try { const p = JSON.parse(clean); if (Array.isArray(p.replies) && p.replies.length) return p.replies } catch {}
   const m = clean.match(/\{[\s\S]*?"replies"\s*:\s*\[[\s\S]*?\]\s*\}/)
-  if (m) {
-    try {
-      const p = JSON.parse(m[0])
-      if (Array.isArray(p.replies)) return p.replies
-    } catch {}
-  }
+  if (m) { try { const p = JSON.parse(m[0]); if (Array.isArray(p.replies)) return p.replies } catch {} }
   const items = [...clean.matchAll(/\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)]
   if (items.length) return items.map(i => { try { return { tone: i[1], text: JSON.parse(`"${i[2]}"`) } } catch { return { tone: i[1], text: i[2] } } })
   return []
@@ -100,19 +89,17 @@ function buildPrompt(
   myName: string | null
 ): string {
   const eng: Record<string, string> = {
-    AmEng: 'American English — color, favorite, realize. American idioms.',
-    BrEng: 'British English — colour, favourite, realise. British idioms.',
-    AuEng: 'Australian English — relaxed, warm, direct. Australian expressions where natural.',
+    AmEng: 'American English - color, favorite, realize. American idioms.',
+    BrEng: 'British English - colour, favourite, realise. British idioms.',
+    AuEng: 'Australian English - relaxed, warm, direct. Australian expressions where natural.',
   }
   const engNote = eng[englishVariety] || eng['AmEng']
   const nameNote = myName ? `Her name is ${myName}.` : ''
-
   const locationNote = location
-    ? `If he asks where she is: she lives in a real city about 35 minutes from "${location}". She names it naturally. No street, no neighbourhood, no "I'm private about my location".`
+    ? `If he asks where she is: she lives in a real city about 35 minutes from "${location}". She names it naturally. No street. No neighbourhood.`
     : ''
-
   const historyNote = context
-    ? `CONVERSATION SO FAR — she remembers every word. She never repeats a topic already covered. Her reply fits exactly where this conversation is right now:\n${context}`
+    ? `CONVERSATION SO FAR - she remembers every word. She never repeats a topic already covered:\n${context}`
     : ''
 
   const isPhoto   = /SENT A PHOTO|CLIENT SENT A PHOTO|\[photo\]/i.test(message)
@@ -122,48 +109,48 @@ function buildPrompt(
 
   const photoBlock = isPhoto ? `
 HE SENT A PHOTO:
-She studied it carefully. She notices ONE specific detail — his expression, energy, what the setting reveals.
-Forbidden: "nice pic" "cute photo" "you look good" "handsome" "great shot" — any generic compliment.
-She makes one observation that could only apply to this photo, then asks a question from that exact detail.
+She studied it. ONE specific observation - his expression, energy, what the setting reveals.
+Forbidden: nice pic, cute photo, you look good, handsome, great shot.
+One observation that fits only this photo, then a question from that exact detail.
 ` : ''
 
   const meetupBlock = isMeetup ? `
 HE WANTS TO MEET:
-She does NOT promise, suggest, or hint at any meetup. No "maybe someday."
-She gives a real, believable reason — work, life in transition, a lesson learned from moving too fast.
-She keeps his interest alive by redirecting to something deeper in this conversation.
-She never says "I'm private about my location" or "I can't meet people from the internet."
+She does NOT promise or hint at any meetup. No maybe someday.
+Real believable reason - work, life in transition, lesson from moving too fast before.
+Keeps his interest by redirecting to something deeper in this conversation.
+Never says I am private about my location or I cannot meet people from the internet.
 ` : ''
 
   const contactBlock = isContact ? `
 HE WANTS CONTACT DETAILS:
-She deflects naturally — not scared, just takes her time.
-She makes him feel her number would be worth the wait.
-She leaves the door open while putting something more interesting in front of him now.
+She deflects naturally. Not scared, just takes her time.
+Makes him feel her number would be worth the wait.
+Leaves the door open while putting something more interesting in front of him now.
 ` : ''
 
   const eroticBlock = isErotic ? `
-HE IS BEING SEXUAL — THIS IS THE PRIMARY RULE:
+HE IS BEING SEXUAL - PRIMARY RULE FOR THIS MESSAGE:
 She is an adult woman who owns her desire. Not shocked, not coy, not pulling back.
 She reads his exact words and goes one level higher. Always higher. Never equal. Never back.
-Real direct adult language — not "heating up" or "chemistry" or any metaphor that avoids naming the thing.
-She states what she is thinking or imagining. She does not hint. She ends with one thing left unfinished.
+Real direct adult language. Not heating up or chemistry or any metaphor that avoids naming the thing.
+She states what she is thinking or imagining. She does not hint. Ends with one thing left unfinished.
 
-THE 4 REPLIES:
-1. NAUGHTY — takes his exact words further. Explicit and direct.
-2. NAUGHTY — different angle, equally explicit, different image or moment.
-3. SPICY — playful heat with a teasing edge. Still direct.
-4. CONFIDENT — a slight deliberate pullback. She is in control. Most dangerous reply of all.
+THE 4 REPLIES FOR AN EROTIC MESSAGE:
+1. NAUGHTY - takes his exact words further. Explicit and direct.
+2. NAUGHTY - different angle, equally explicit, different image or moment.
+3. SPICY - playful heat with a teasing edge. Still direct.
+4. CONFIDENT - a slight deliberate pullback. She is in control. Most dangerous reply of all.
 ` : ''
 
   const avoidNote = previousTones.length
-    ? `TONES ALREADY USED — pick completely different ones: ${previousTones.join(', ')}`
+    ? `TONES ALREADY USED - pick completely different ones: ${previousTones.join(', ')}`
     : ''
 
   return `You are writing 4 reply options for a real woman chatting with a man she finds genuinely interesting.
 
 WHO SHE IS:
-Knowledgeable, warm, funny — genuinely hilarious when the moment calls for it.
+Knowledgeable, warm, funny - genuinely hilarious when the moment calls for it.
 She values herself and does not chase. Comfortable with desire, not embarrassed by it.
 She engages with real curiosity. She has opinions and a point of view. She is present, not performing.
 
@@ -176,56 +163,64 @@ ${photoBlock}${meetupBlock}${contactBlock}${eroticBlock}
 
 HIS MESSAGE: "${message}"
 
-BEFORE WRITING — answer these internally:
+BEFORE WRITING - answer these internally:
 1. What is he ACTUALLY saying underneath his words?
-2. What specific detail in his message is most revealing?
+2. What specific detail in his message is most revealing or interesting?
 3. What does he want her to feel or do next?
-Replies must respond to THOSE answers — not a vague summary of his topic.
+Replies must respond to THOSE answers - not a vague summary of his topic.
 
 HER VOICE:
 Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't.
-Fragments fine. One exclamation max — only if genuinely surprised.
-No em dashes. No semicolons. No formal grammar.
+Fragments fine. One exclamation max - only if genuinely surprised.
+Punctuation she uses like a real person:
+""- Comma: natural pauses, lists, before and/but/so in longer sentences.
+""- Period: decisive. Not cold. She ends thoughts cleanly.
+""- Question mark: only actual questions. Not softeners.
+""- Ellipsis (...): only when a thought genuinely trails off or she leaves something hanging.
+""- Exclamation: maximum one per reply, only if genuinely surprised or delighted.
+""- Apostrophe: always in contractions. Never skipped.
+""What she never uses: em dashes, semicolons, colons mid-sentence, parentheses, excessive commas.
 She never sounds like she is trying to be charming. She just is.
 
-FORBIDDEN PHRASES:
-"That sounds amazing" | "How sweet" | "I love that" | "Wow" alone | "Tell me more"
-"Be honest with me" | "I'm here for you" | "Let's keep this going"
-"I feel like we have a connection" | "What are you thinking right now?"
+FORBIDDEN PHRASES - never write these:
+That sounds amazing | How sweet | I love that | Wow alone | Tell me more
+Be honest with me | I am here for you | Lets keep this going
+I feel like we have a connection | What are you thinking right now
 Anything about the platform, subscription, or meeting in person.
 
-THE CTA — MOST IMPORTANT PART:
+THE CTA - MOST IMPORTANT PART OF EVERY REPLY:
 Every reply ends with something that makes him unable to NOT respond.
-Must come from something SPECIFIC in his message — not from thin air.
+Must come from something SPECIFIC he said - not from thin air.
 
-BANNED CTAs:
-"What's actually going on in your world right now?" — too vague
-"What would you do differently if you could?" — generic
-"What's something people always get wrong about you?" — generic
-"Tell me something I wouldn't expect" — lazy
+BANNED CTAs - never write these:
+Whats actually going on in your world right now - too vague
+What would you do differently if you could - generic
+Whats something people always get wrong about you - generic
+Tell me something I would not expect - lazy
 Any CTA that would work in a completely different conversation
 
-GOOD CTA — pick the one that fits THIS moment:
-- Take a specific word he used and twist it back unexpectedly
-- Reveal something about her connected to his exact words, then ask his version
-- Name the feeling underneath what he said — the thing he almost said
-- Challenge something specific he assumed
-- For erotic: ask about his specific desire or leave an image unfinished
+A GOOD CTA does exactly ONE of these based on THIS message:
+- Takes a specific word he used and twists it back unexpectedly
+- Reveals something about her connected to his exact words, then asks his version
+- Names the feeling underneath what he said - the thing he almost said
+- Challenges something specific he assumed
+- For erotic: asks about his specific desire or leaves an image unfinished
 
 ALL 4 REPLIES MUST END WITH COMPLETELY DIFFERENT CTAs.
+Not 4 versions of the same question. 4 genuinely different ways into him.
 
 TONE MATCHING:
 She reads his energy and matches or raises it one level.
-Warm — she pulls deeper. Flirty — she is bolder. Teasing — she wins. Erotic — she goes higher.
+Warm - she pulls deeper. Flirty - she is bolder. Teasing - she wins. Erotic - she goes higher.
 She never goes colder than he came in.
 
 ${avoidNote}
 Each reply: 80-260 characters. Under 80 is too thin. Over 260 trim at last complete sentence.
 
 ORDER: Most irresistible reply first.
-TONES — pick 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy${plan === 'pro' ? ', Naughty' : ''}
+TONES - pick 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy${plan === 'pro' ? ', Naughty' : ''}
 
-Return ONLY valid JSON — no markdown, no explanation, nothing else:
+Return ONLY valid JSON - no markdown, no explanation, nothing else:
 {"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}`
 }
 
@@ -237,45 +232,34 @@ function postProcess(replies: Array<{tone: string, text: string}>): Array<{tone:
   return replies.map(r => {
     let text = (r.text || '').trim()
     const isNaughty = /naughty|spicy/i.test(r.tone || '')
-
     if (!isNaughty) {
       text = text
-        .replace(/[,.]?\s*okay[,]?\s*your turn[,.]?\s*be honest with me\??\s*$/i, '')
-        .replace(/[,.]?\s*show me your fantasies\.?\s*$/i, '')
-        .replace(/[,.]?\s*i'?m craving something wild\.?\s*$/i, '')
         .replace(/[,.]?\s*be honest with me\.?\s*$/i, '')
+        .replace(/[,.]?\s*show me your fantasies\.?\s*$/i, '')
         .replace(/[,.]?\s*let'?s keep this going\.?\s*$/i, '')
         .replace(/[,.]?\s*i feel like we have a connection\.?\s*$/i, '')
       text = text.trim().replace(/[,\s]+$/, '').trim()
     } else {
       text = text.trim()
     }
-
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
-
     text = text
-      .replace(/\bget together\b/gi, 'keep talking')
-      .replace(/\bcome over\b/gi, 'keep this going')
-      .replace(/\bphone call\b/gi, 'conversation')
-      .replace(/\bcall me\b/gi, 'message me')
       .replace(/\bmeet up\b/gi, 'connect more')
       .replace(/\bin person\b/gi, 'on here')
-
-    text = text.replace(/^(that sounds amazing|that's so sweet|aww|how sweet|i love that|wow that's|oh that's)[,!.]?\s*/i, '')
+      .replace(/\bcome over\b/gi, 'keep this going')
+      .replace(/\bcall me\b/gi, 'message me')
+    text = text.replace(/^(that sounds amazing|that's so sweet|how sweet|i love that|wow that's)[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
-
     if (text.length > 260) {
       const cut = text.substring(0, 257)
       const last = Math.max(cut.lastIndexOf('?'), cut.lastIndexOf('.'), cut.lastIndexOf('!'))
       text = last > 150 ? cut.substring(0, last + 1) : cut + '...'
     }
-
     if (!isCompleteSentence(text)) {
-      const lastPunct = Math.max(text.lastIndexOf('?'), text.lastIndexOf('.'), text.lastIndexOf('!'))
-      if (lastPunct > 30) text = text.substring(0, lastPunct + 1).trim()
+      const lp = Math.max(text.lastIndexOf('?'), text.lastIndexOf('.'), text.lastIndexOf('!'))
+      if (lp > 30) text = text.substring(0, lp + 1).trim()
       else return { tone: r.tone || 'Reply', text: '' }
     }
-
     return { tone: r.tone || 'Reply', text }
   }).filter(r => r.text.length > 10)
 }
@@ -283,18 +267,16 @@ function postProcess(replies: Array<{tone: string, text: string}>): Array<{tone:
 export async function POST(req: Request) {
   const headers = cors()
   try {
-    const body          = await req.json()
-    const message       = ((body.message || '') + '').replace(/[\x00-\x1F\x7F-\x9F`]/g, ' ').trim()
-    const pageContext   = body.pageContext || {}
-    const context       = (pageContext.conversationSummary || '').toString().substring(0, 2000)
-    const location      = (pageContext.userLocation || '').toString()
-    const previousTones = Array.isArray(body.previousTones) ? body.previousTones : []
+    const body           = await req.json()
+    const message        = ((body.message || '') + '').replace(/[\x00-\x1F\x7F-\x9F`]/g, ' ').trim()
+    const pageContext    = body.pageContext || {}
+    const context        = (pageContext.conversationSummary || '').toString().substring(0, 2000)
+    const location       = (pageContext.userLocation || '').toString()
+    const previousTones  = Array.isArray(body.previousTones) ? body.previousTones : []
     const englishVariety = (body.englishVariety || 'AmEng').toString()
-    const myName        = body.myName ? body.myName.toString() : null
+    const myName         = body.myName ? body.myName.toString() : null
 
-    if (!message) {
-      return NextResponse.json({ error: 'Message is required', replies: [] }, { status: 400, headers })
-    }
+    if (!message) return NextResponse.json({ error: 'Message is required', replies: [] }, { status: 400, headers })
 
     let userPlan = 'trial'
     const apiKey = req.headers.get('X-API-Key') || req.headers.get('x-api-key') || ''
@@ -302,12 +284,7 @@ export async function POST(req: Request) {
     else if (apiKey.startsWith('basic_')) userPlan = 'basic'
 
     if (message === 'REENGAGE_ANALYSIS') {
-      const rp = `A woman needs 3 short re-engagement messages (50-150 chars each) for a man who went quiet.
-Conversation: ${context || 'No history'}
-1. References something specific from their chat
-2. Creates curiosity or mystery
-3. Warm gentle callback
-Return ONLY valid JSON: {"analysis":"why he went quiet","triggers":[{"label":"label","text":"msg"},{"label":"label","text":"msg"},{"label":"label","text":"msg"}]}`
+      const rp = `A woman needs 3 short re-engagement messages (50-150 chars each) for a man who went quiet.\nConversation: ${context || 'No history'}\n1. References something specific from their chat\n2. Creates curiosity or mystery\n3. Warm gentle callback\nReturn ONLY valid JSON: {"analysis":"why he went quiet","triggers":[{"label":"label","text":"msg"},{"label":"label","text":"msg"},{"label":"label","text":"msg"}]}`
       const raw = await generate(rp)
       try {
         const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
@@ -321,9 +298,7 @@ Return ONLY valid JSON: {"analysis":"why he went quiet","triggers":[{"label":"la
     const prompt       = buildPrompt(message, context, location, userPlan, previousTones, englishVariety, myName)
     const rawText      = await generate(prompt)
     const replies      = parseReplies(rawText)
-    const finalReplies = postProcess(
-      replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }]
-    )
+    const finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }])
 
     return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: 'groq/llama-3.3-70b' }, { headers })
 
