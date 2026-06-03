@@ -276,6 +276,7 @@ export async function POST(req: Request) {
     const pageContext    = body.pageContext || {}
     const context        = (pageContext.conversationSummary || '').toString().substring(0, 2000)
     const location       = (pageContext.userLocation || '').toString()
+    const questionsToAnswer: string[] = Array.isArray(pageContext.questionsToAnswer) ? pageContext.questionsToAnswer as string[] : []
     const previousTones  = Array.isArray(body.previousTones) ? body.previousTones : []
     const englishVariety = (body.englishVariety || 'AmEng').toString()
     const myName         = body.myName ? body.myName.toString() : null
