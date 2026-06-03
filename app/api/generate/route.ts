@@ -1,4 +1,4 @@
-// CIC generate route v10.0.0 - TextingFactory/Chathomebase optimised
+// CIC generate route v10.1.0 - Llama 4 Scout primary, Llama 3.3 70B fallback
 // Groq Llama 3.3 70B primary | OpenRouter fallback
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
@@ -23,7 +23,12 @@ async function generate(prompt: string): Promise<string> {
 
   if (groqKey) {
     const groq = createGroq({ apiKey: groqKey })
-    for (const model of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
+    for (const model of [
+      'meta-llama/llama-4-scout-17b-16e-instruct',
+      'meta-llama/llama-4-maverick-17b-128e-instruct',
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+    ]) {
       try {
         const result = await generateText({
           model: groq(model),
@@ -41,27 +46,38 @@ async function generate(prompt: string): Promise<string> {
   }
 
   if (openrouterKey) {
-    try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${openrouterKey}`,
-          'HTTP-Referer': 'https://cic-backend-v2-princes-projects-5a5b6cec.vercel.app',
-        },
-        body: JSON.stringify({
-          model: 'meta-llama/llama-3.3-70b-instruct:free',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.88,
-          max_tokens: 900,
-        }),
-      })
-      const data = await res.json()
-      const text = data?.choices?.[0]?.message?.content
-      if (text) { console.log('[CIC] OpenRouter: llama-3.3-70b'); return text }
-      if (data?.error) errors.push(`OpenRouter: ${JSON.stringify(data.error).substring(0, 80)}`)
-    } catch (e: any) {
-      errors.push(`OpenRouter: ${e?.message?.substring(0, 80)}`)
+    const orModels = [
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'deepseek/deepseek-chat-v3-0324:free',
+      'mistralai/mistral-small-3.2-24b-instruct:free',
+      'qwen/qwen3-32b:free',
+      'google/gemma-3-27b-it:free',
+    ]
+    for (const orModel of orModels) {
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${openrouterKey}`,
+            'HTTP-Referer': 'https://cic-backend-v2-princes-projects-5a5b6cec.vercel.app',
+          },
+          body: JSON.stringify({
+            model: orModel,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.88,
+            max_tokens: 900,
+          }),
+        })
+        const data = await res.json()
+        const text = data?.choices?.[0]?.message?.content
+        if (text) { console.log('[CIC] OpenRouter:', orModel); return text }
+        const errCode = data?.error?.code || data?.error?.status || 0
+        errors.push(`OpenRouter/${orModel}: ${JSON.stringify(data?.error || 'empty').substring(0, 80)}`)
+        if (errCode !== 429 && errCode !== 503) break
+      } catch (e: any) {
+        errors.push(`OpenRouter/${orModel}: ${e?.message?.substring(0, 80)}`)
+      }
     }
   }
 
