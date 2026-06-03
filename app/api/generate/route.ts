@@ -28,7 +28,7 @@ async function generate(prompt: string): Promise<string> {
         const result = await generateText({
           model: groq(model),
           prompt,
-          temperature: 0.82 + Math.random() * 0.12,
+          temperature: 0.85,
           maxTokens: 900,
         })
         if (result.text) { console.log('[CIC] Groq:', model); return result.text }
@@ -86,12 +86,13 @@ function buildPrompt(
   plan: string,
   previousTones: string[],
   englishVariety: string,
-  myName: string | null
+  myName: string | null,
+  questionsToAnswer: string[] = []
 ): string {
   const eng: Record<string, string> = {
-    AmEng: 'American English - color, favorite, realize. American idioms.',
-    BrEng: 'British English - colour, favourite, realise. British idioms.',
-    AuEng: 'Australian English - relaxed, warm, direct. Australian expressions where natural.',
+    AmEng: 'American English. Spelling: color, favorite, realize, center, honor, traveling, canceled. Idioms: awesome, sure thing, you bet, totally, figured out, mad at, different than.',
+    BrEng: 'British English. Spelling: colour, favourite, realise, centre, honour, travelling, cancelled. Idioms: brilliant, cheers, reckon, sorted, proper, quite, rather, fancy, keen, bloody, chuffed, gutted, mate.',
+    AuEng: 'Australian English. Spelling: colour, favourite, realise, centre, honour (same as British). Vocabulary and idioms she uses naturally: arvo (afternoon), arvo, reckon, heaps (very/a lot), keen, yeah nah, nah yeah, fair dinkum, no worries, too easy, deadset, brekkie, servo, rego, dodgy, cheeky, suss, stoked, gutted, mate, legend, ripper, bloody, crikey, strewth. She sounds like an actual Australian woman, not a parody. The words come naturally in context, not forced.',
   }
   const engNote = eng[englishVariety] || eng['AmEng']
   const nameNote = myName ? `Her name is ${myName}.` : ''
@@ -149,7 +150,7 @@ THE 4 REPLIES FOR AN EROTIC MESSAGE:
 
   return `You are writing 4 reply options for a real woman chatting with a man she finds genuinely interesting.
 
-WHO SHE IS:
+WHO SHE IS - NON-NEGOTIABLE:
 Knowledgeable, warm, funny - genuinely hilarious when the moment calls for it.
 She values herself and does not chase. Comfortable with desire, not embarrassed by it.
 She engages with real curiosity. She has opinions and a point of view. She is present, not performing.
@@ -163,13 +164,16 @@ ${photoBlock}${meetupBlock}${contactBlock}${eroticBlock}
 
 HIS MESSAGE: "${message}"
 
-BEFORE WRITING - answer these internally:
+${questionsToAnswer.length > 1 ? "IMPORTANT - HE ASKED MULTIPLE QUESTIONS. She must answer ALL of them: " + questionsToAnswer.join(" | ") + "\n\n" : ""}
+BEFORE WRITING - answer these internally (she is a WOMAN replying to a MAN):
 1. What is he ACTUALLY saying underneath his words?
-2. What specific detail in his message is most revealing or interesting?
+2. Has he asked more than one question? She MUST answer ALL of them.
+3. What specific detail is most revealing?
 3. What does he want her to feel or do next?
 Replies must respond to THOSE answers - not a vague summary of his topic.
 
 HER VOICE:
+She NEVER echoes his exact words, metaphors or images back to him. If he says fireplace she does not say fireplace. She responds to the feeling behind what he said with something entirely her own.\n"
 Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't.
 Fragments fine. One exclamation max - only if genuinely surprised.
 Punctuation she uses like a real person:
@@ -186,7 +190,7 @@ FORBIDDEN PHRASES - never write these:
 That sounds amazing | How sweet | I love that | Wow alone | Tell me more
 Be honest with me | I am here for you | Lets keep this going
 I feel like we have a connection | What are you thinking right now
-Anything about the platform, subscription, or meeting in person.
+Anything about the platform, subscription, or meeting in person.\nRepeating or echoing his exact words or metaphors back to him - respond to the idea, not the words.
 
 THE CTA - MOST IMPORTANT PART OF EVERY REPLY:
 Every reply ends with something that makes him unable to NOT respond.
@@ -295,7 +299,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const prompt       = buildPrompt(message, context, location, userPlan, previousTones, englishVariety, myName)
+    const prompt       = buildPrompt(message, context, location, userPlan, previousTones, englishVariety, myName, questionsToAnswer)
     const rawText      = await generate(prompt)
     const replies      = parseReplies(rawText)
     const finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }])
