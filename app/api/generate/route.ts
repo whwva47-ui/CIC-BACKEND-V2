@@ -411,7 +411,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const message     = ((body.message || '') + '').replace(/[\x00-\x1F\x7F-\x9F`]/g, ' ').trim()
+    const message     = ((body.message || '') + '').replace(/[\x00-\x1F\x7F-\x9F]/g, ' ').trim()
     const pageContext = body.pageContext || {}
     const platform    = (pageContext.platform || 'generic').toString()
     const context     = (pageContext.conversationSummary || '').toString().substring(0, 2000)
