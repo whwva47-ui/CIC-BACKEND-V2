@@ -24,8 +24,8 @@ async function generate(prompt: string): Promise<string> {
     const groq = createGroq({ apiKey: groqKey })
     for (const model of [
       'meta-llama/llama-4-scout-17b-16e-instruct',
-      'meta-llama/llama-4-maverick-17b-128e-instruct',
       'llama-3.3-70b-versatile',
+      'qwen-qwen3-32b',
       'llama-3.1-8b-instant',
     ]) {
       try {
@@ -47,9 +47,11 @@ async function generate(prompt: string): Promise<string> {
   if (openrouterKey) {
     const orModels = [
       'meta-llama/llama-3.3-70b-instruct:free',
-      'deepseek/deepseek-chat-v3-0324:free',
+      'openrouter/owl-alpha',
       'mistralai/mistral-small-3.2-24b-instruct:free',
       'qwen/qwen3-32b:free',
+      'google/gemma-3-27b-it:free',
+      'openrouter/free',
     ]
     for (const orModel of orModels) {
       try {
