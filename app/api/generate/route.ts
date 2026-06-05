@@ -1,4 +1,4 @@
-// CIC generate route v11.0.0 - Full empathy, erotic, location, grief handling
+// CIC generate route v11.1.0 - Paid OpenRouter primary, Groq free tier backup
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
@@ -52,12 +52,10 @@ async function generate(prompt: string): Promise<string> {
 
   if (openrouterKey) {
     const orModels = [
-      'meta-llama/llama-3.3-70b-instruct:free',
-      'openrouter/owl-alpha',
-      'mistralai/mistral-small-3.2-24b-instruct:free',
-      'qwen/qwen3-32b:free',
-      'google/gemma-3-27b-it:free',
-      'openrouter/free',
+      'meta-llama/llama-3.3-70b-instruct',
+      'meta-llama/llama-4-scout',
+      'qwen/qwen3-32b',
+      'mistralai/mistral-small-3.2-24b-instruct',
     ]
     for (const orModel of orModels) {
       try {
