@@ -25,15 +25,17 @@ async function generate(prompt: string): Promise<string> {
     for (const model of [
       'meta-llama/llama-4-scout-17b-16e-instruct',
       'llama-3.3-70b-versatile',
-      'qwen-qwen3-32b',
+      'qwen/qwen3-32b',
       'llama-3.1-8b-instant',
     ]) {
       try {
+        const isQwen = model.includes('qwen')
         const result = await generateText({
           model: groq(model),
           prompt,
           temperature: 0.85,
           maxTokens: 1800,
+          ...(isQwen ? { providerOptions: { groq: { reasoning_effort: 'none' } } } : {}),
         })
         if (result.text) { console.log('[CIC] Groq:', model); return result.text }
       } catch (e: any) {
