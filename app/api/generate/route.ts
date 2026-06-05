@@ -11,8 +11,22 @@ function cors() {
   }
 }
 
+export const runtime = 'edge'
+export const preferredRegion = 'auto'
+
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: cors() })
+}
+
+export async function GET() {
+  const groqKey = process.env.GROQ_API_KEY
+  const orKey = process.env.OPENROUTER_API_KEY
+  return new Response(JSON.stringify({
+    status: 'ok',
+    groq: !!groqKey,
+    openrouter: !!orKey,
+    version: 'v11.1.0'
+  }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
 async function generate(prompt: string): Promise<string> {
