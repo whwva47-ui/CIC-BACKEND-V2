@@ -33,7 +33,7 @@ async function generate(prompt: string): Promise<string> {
           model: groq(model),
           prompt,
           temperature: 0.85,
-          maxTokens: 1000,
+          maxTokens: 1800,
         })
         if (result.text) { console.log('[CIC] Groq:', model); return result.text }
       } catch (e: any) {
@@ -87,9 +87,28 @@ async function generate(prompt: string): Promise<string> {
 function parseReplies(raw: string): Array<{tone: string, text: string}> {
   if (!raw) return []
   const clean = raw.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim()
+
+  // Try direct parse first
   try { const p = JSON.parse(clean); if (Array.isArray(p.replies) && p.replies.length) return p.replies } catch {}
+
+  // Try extracting the replies array
   const m = clean.match(/\{[\s\S]*?"replies"\s*:\s*\[[\s\S]*?\]\s*\}/)
   if (m) { try { const p = JSON.parse(m[0]); if (Array.isArray(p.replies)) return p.replies } catch {} }
+
+  // Handle truncated JSON - extract individual reply objects that are complete
+  const replies: Array<{tone: string, text: string}> = []
+  const replyPattern = /\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^\\"]|\\.)*)"\s*\}/g
+  let match
+  while ((match = replyPattern.exec(clean)) !== null) {
+    try {
+      const text = JSON.parse('"' + match[2] + '"')
+      if (text && text.length > 5) replies.push({ tone: match[1], text })
+    } catch {
+      if (match[2] && match[2].length > 5) replies.push({ tone: match[1], text: match[2] })
+    }
+  }
+  if (replies.length > 0) return replies
+
   return []
 }
 
