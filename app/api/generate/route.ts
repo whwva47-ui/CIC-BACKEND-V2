@@ -11,7 +11,7 @@ function cors() {
   }
 }
 
-export const maxDuration = 30
+export const maxDuration = 60
 
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: cors() })
