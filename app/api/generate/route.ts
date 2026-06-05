@@ -25,23 +25,27 @@ async function generate(prompt: string): Promise<string> {
     for (const model of [
       'meta-llama/llama-4-scout-17b-16e-instruct',
       'llama-3.3-70b-versatile',
-      'qwen/qwen3-32b',
-      'llama-3.1-8b-instant',
     ]) {
       try {
-        const isQwen = model.includes('qwen')
+        // Use AbortController to kill the request fast if rate limited
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 12000)
         const result = await generateText({
           model: groq(model),
           prompt,
           temperature: 0.85,
           maxTokens: 1800,
-          ...(isQwen ? { providerOptions: { groq: { reasoning_effort: 'none' } } } : {}),
+          abortSignal: controller.signal,
         })
+        clearTimeout(timeout)
         if (result.text) { console.log('[CIC] Groq:', model); return result.text }
       } catch (e: any) {
         const s = e?.statusCode || e?.status || ''
-        errors.push(`Groq/${model}(${s}): ${e?.message?.substring(0, 80)}`)
-        if (s !== 429 && !e?.message?.includes('limit')) break
+        const msg = e?.message || ''
+        errors.push(`Groq/${model}(${s}): ${msg.substring(0, 80)}`)
+        // On rate limit or 404 - skip immediately, no retry
+        if (s === 429 || s === 404 || msg.includes('Rate limit') || msg.includes('limit') || msg.includes('does not exist')) continue
+        break
       }
     }
   }
@@ -57,6 +61,8 @@ async function generate(prompt: string): Promise<string> {
     ]
     for (const orModel of orModels) {
       try {
+        const orController = new AbortController()
+        const orTimeout = setTimeout(() => orController.abort(), 15000)
         const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -70,7 +76,9 @@ async function generate(prompt: string): Promise<string> {
             temperature: 0.88,
             max_tokens: 1000,
           }),
+                  signal: orController.signal,
         })
+        clearTimeout(orTimeout)
         const data = await res.json()
         const text = data?.choices?.[0]?.message?.content
         if (text) { console.log('[CIC] OpenRouter:', orModel); return text }
