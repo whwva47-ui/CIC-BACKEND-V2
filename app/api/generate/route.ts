@@ -136,7 +136,6 @@ function parseReplies(raw: string): Array<{tone: string, text: string}> {
 function buildPrompt(
   message: string,
   context: string,
-  hisLocation: string,
   plan: string,
   previousTones: string[],
   englishVariety: string,
@@ -151,12 +150,9 @@ function buildPrompt(
   const engNote = eng[englishVariety] || eng['AmEng']
   const nameNote = myName ? `Her name is ${myName}.` : ''
 
-  const locationNote = hisLocation
-    ? `LOCATION RULE: His location is "${hisLocation}". She lives in a real specific city or suburb 40-60 minutes drive from "${hisLocation}". She names an ACTUAL place that exists near there. Never vague. Never invented. She states it naturally with no street or address. Never says she is private about her location. Example: if he is in Sydney she says Blue Mountains or Wollongong. If he is in London she says Oxford or Brighton. If he is in New York she says Philadelphia or Princeton.`
-    : 'If he directly asks where she is: she names a real specific city about 45 minutes from wherever he is. She does NOT volunteer location unprompted. She NEVER implies a meetup is possible by mentioning proximity.'
 
   const historyNote = context
-    ? `CONVERSATION SO FAR - she remembers every word, never repeats a topic:\n${context}`
+    ? `CONVERSATION HISTORY - she has read every single message. This is critical:\n${context}\n\nBEFORE WRITING: scan every reply she has already sent in this history. She MUST NOT repeat any angle, question, observation, or idea she has already used. If she already asked about his job - she does not ask about his job again. If she already complimented something - she does not repeat that compliment. Every reply must be genuinely new ground.`
     : ''
 
   const isPhoto = /SENT A PHOTO|CLIENT SENT A PHOTO|\[photo\]/i.test(message)
@@ -283,7 +279,6 @@ Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
     '',
     'LANGUAGE: ' + engNote,
     nameNote,
-    locationNote,
     '',
     historyNote,
     multiQ,
@@ -351,23 +346,30 @@ Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
     'Good reply: acknowledges that he misses real human connection, that she feels that too, then gently explains why she is not ready for a call yet while making him feel the connection here is already real.',
     '',
     'THE CTA - MOST IMPORTANT PART:',
-    'Every reply ends with something that makes him unable to not respond.',
-    'Must come from something SPECIFIC in his message - not from thin air.',
+    'Every reply ends with something that pulls HIM deeper into the EXACT topic he just raised.',
+    'The CTA must be a direct continuation of THIS conversation thread - never a pivot to a new topic.',
+    'If he is talking about his morning - she stays in his morning. If about his job - she stays in his job.',
+    'If he is being erotic - she stays in that energy. If vulnerable - she stays in that feeling.',
     '',
-    'BANNED CTAs - never write these:',
-    '"Whats going on in your world" | "What would you do differently" | "What do people get wrong about you"',
-    '"Tell me something unexpected" | "Your turn" | "What are you thinking"',
-    'Any CTA that works in a completely different conversation.',
+    'BANNED CTAs - these break the thread and kill momentum:',
+    '"Whats going on in your world" - changes topic entirely',
+    '"What do people get wrong about you" - random pivot',
+    '"Tell me something unexpected" - lazy and generic',
+    '"What are you thinking" - vague and disconnected',
+    '"Your turn" - no substance',
+    'Any question that could be asked in a completely different conversation',
+    'Any question that ignores what he just said',
     '',
-    'GOOD CTA - pick one based on THIS message:',
-    '- Twists a specific detail he mentioned back on him unexpectedly',
-    '- Reveals something about her tied to his exact situation, asks his version',
-    '- Names the feeling underneath what he said',
-    '- Gently challenges something he assumed',
-    '- For grief: asks something that shows she wants to understand HIM',
-    '- For erotic: asks about his specific desire or leaves an image unfinished',
+    'GOOD CTA - it must do ONE of these based on THIS exact message:',
+    '- Pull a specific word, detail, or feeling from his message and go deeper into it',
+    '- Reveal something about her that connects directly to what he just said',
+    '- Ask the next natural question in THIS conversation thread',
+    '- Name the thing underneath what he said and ask him about that specifically',
+    '- For erotic: escalate within the same scene he started, leave one thing unfinished',
+    '- For grief/vulnerability: ask something that shows she wants to understand THIS pain specifically',
     '',
-    'ALL 4 REPLIES MUST END WITH COMPLETELY DIFFERENT CTAs. 4 different angles into this specific man.',
+    'ALL 4 REPLIES END WITH DIFFERENT CTAs - but all 4 must stay within the same conversation topic.',
+    'Different angles into the SAME subject - never 4 pivots to 4 different subjects.',
     '',
     'KEEPING HIM TALKING:',
     'Goal is genuine connection, not just the next message.',
@@ -440,7 +442,6 @@ export async function POST(req: Request) {
     const message = ((body.message || '') + '').replace(/[\x00-\x1F\x7F-\x9F]/g, ' ').trim()
     const pageContext = body.pageContext || {}
     const context = (pageContext.conversationSummary || '').toString().substring(0, 2000)
-    const hisLocation = (pageContext.userLocation || pageContext.clientLocation || '').toString()
     const questionsToAnswer: string[] = Array.isArray(pageContext.questionsToAnswer) ? pageContext.questionsToAnswer as string[] : []
     const previousTones = Array.isArray(body.previousTones) ? body.previousTones : []
     const englishVariety = (body.englishVariety || 'AmEng').toString()
@@ -473,7 +474,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const prompt = buildPrompt(message, context, hisLocation, userPlan, previousTones, englishVariety, myName, questionsToAnswer)
+    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer)
     const rawText = await generate(prompt)
     const replies = parseReplies(rawText)
     const finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }])
