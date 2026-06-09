@@ -345,30 +345,42 @@ Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
     'Bad reply: Morning walk huh? You must be disciplined. What is the most spontaneous thing you did today?',
     'Good reply: acknowledges that he misses real human connection, that she feels that too, then gently explains why she is not ready for a call yet while making him feel the connection here is already real.',
     '',
-    'THE CTA - MOST IMPORTANT PART:',
-    'Every reply ends with something that pulls HIM deeper into the EXACT topic he just raised.',
-    'The CTA must be a direct continuation of THIS conversation thread - never a pivot to a new topic.',
-    'If he is talking about his morning - she stays in his morning. If about his job - she stays in his job.',
-    'If he is being erotic - she stays in that energy. If vulnerable - she stays in that feeling.',
+    'THE CTA - THE SINGLE MOST IMPORTANT PART OF EVERY REPLY:',
+    'A great CTA makes it psychologically difficult for him NOT to respond.',
+    'It creates an open loop in his mind - something unresolved he needs to close.',
+    'It must grow directly out of THIS message, THIS moment, THIS man.',
     '',
-    'BANNED CTAs - these break the thread and kill momentum:',
-    '"Whats going on in your world" - changes topic entirely',
-    '"What do people get wrong about you" - random pivot',
-    '"Tell me something unexpected" - lazy and generic',
-    '"What are you thinking" - vague and disconnected',
+    'THE CTA MUST STAY ON THE CURRENT TOPIC:',
+    'The CTA is a direct continuation of what he just raised - never a pivot to something new.',
+    'If he is talking about his morning - stay in his morning.',
+    'If he is talking about his job - stay in his job.',
+    'If he is being erotic - stay in that energy and escalate.',
+    'If he is being vulnerable - stay in that feeling and go deeper.',
+    '',
+    'WHAT MAKES A CTA IRRESISTIBLE - use these mechanics:',
+    '1. THE OPEN LOOP: Start something she does not finish. A half-revealed thought, a story she stops mid-way, an image she leaves hanging. He has to respond to close it.',
+    '2. THE SPECIFIC CHALLENGE: Call out something precise in what he said - a claim, an assumption, a detail - and make him defend or explain it.',
+    '3. THE MIRROR: Reflect his exact energy back at him with a question that shows she read him completely - the thing he was really saying underneath the words.',
+    '4. THE REVEAL AND ASK: She tells him something small, specific, and surprising about herself that connects to what he said - then asks his version.',
+    '5. THE ESCALATION: For erotic/flirty exchanges - she takes exactly what he said and pushes it one step further, leaving the next move to him.',
+    '6. THE VULNERABLE PULL: For emotional moments - she names the feeling underneath what he said, acknowledges it, then asks the question that shows she actually wants to understand him.',
+    '',
+    'TEST FOR A GOOD CTA: Could he answer with just yes, no, or fine? If yes - it is too weak. Rewrite it.',
+    'A good CTA requires him to actually think, feel, or reveal something to answer it.',
+    '',
+    'PERMANENTLY BANNED CTAs:',
+    '"Whats going on in your world" - generic pivot',
+    '"What do people get wrong about you" - random and disconnected',
+    '"Tell me something unexpected" - lazy',
+    '"What are you thinking" - no specificity',
     '"Your turn" - no substance',
-    'Any question that could be asked in a completely different conversation',
-    'Any question that ignores what he just said',
+    '"Be honest with me" - chatbot phrase',
+    'Any CTA answerable with one word',
+    'Any CTA that ignores what he just said',
+    'Any CTA that works in a completely different conversation',
     '',
-    'GOOD CTA - it must do ONE of these based on THIS exact message:',
-    '- Pull a specific word, detail, or feeling from his message and go deeper into it',
-    '- Reveal something about her that connects directly to what he just said',
-    '- Ask the next natural question in THIS conversation thread',
-    '- Name the thing underneath what he said and ask him about that specifically',
-    '- For erotic: escalate within the same scene he started, leave one thing unfinished',
-    '- For grief/vulnerability: ask something that shows she wants to understand THIS pain specifically',
-    '',
-    'ALL 4 REPLIES END WITH DIFFERENT CTAs - but all 4 must stay within the same conversation topic.',
+    'ALL 4 REPLIES MUST END WITH DIFFERENT CTAs - all staying within the same topic.',
+    'Each CTA uses a different mechanic from the list above.',
     'Different angles into the SAME subject - never 4 pivots to 4 different subjects.',
     '',
     'KEEPING HIM TALKING:',
@@ -386,6 +398,8 @@ Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
     '',
     avoidNote,
     'Each reply: minimum 75 characters, maximum 260 characters.',
+    'CRITICAL: Replies under 75 characters are too thin to be meaningful. If you are struggling to reach 75 chars, it means the reply lacks substance. Add a specific observation, a feeling, or a detail - not filler.',
+    'A reply that is only a question with no substance before it is too weak. Lead with something real, then ask.',
     '',
     'ORDER: Most irresistible and human reply first.',
     'TONES - pick 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy, Naughty',
@@ -431,8 +445,49 @@ function postProcess(replies: Array<{tone: string, text: string}>): Array<{tone:
       if (lp > 30) text = text.substring(0, lp + 1).trim()
       else return { tone: r.tone || 'Reply', text: '' }
     }
+
+    //    Enforce minimum 75 characters                                       
+    // If a complete reply is too short, pad it with a contextual bridge
+    // that adds substance without sounding forced
+    if (text.length < 75) {
+      const endsWithQ = text.endsWith('?')
+      const pads = endsWithQ ? [
+        // Pads for replies ending in a question - add context before the question
+        // We restructure: move the question to end of a richer sentence
+        ' There is something about the way you said that I keep coming back to.',
+        ' I want to get this right because I think it actually matters.',
+        ' Something about that is sitting with me and I cannot quite place it.',
+        ' That landed differently than I expected it to.',
+      ] : [
+        ' There is more to that than you are letting on.',
+        ' Something about that is more interesting than it sounds.',
+        ' I keep thinking about that and I cannot decide what it says about you.',
+        ' That is the kind of thing I would want to know more about.',
+      ]
+      // Try each pad - if the reply ends with ? we insert before the question
+      for (const pad of pads) {
+        let padded: string
+        if (endsWithQ) {
+          // Find last sentence before the question and insert pad after it
+          const lastSent = Math.max(text.lastIndexOf('. '), text.lastIndexOf('! '))
+          if (lastSent > 10) {
+            padded = text.substring(0, lastSent + 1) + pad + ' ' + text.substring(lastSent + 2)
+          } else {
+            padded = text.slice(0, -1) + '.' + pad + '?'
+          }
+        } else {
+          padded = text + pad
+        }
+        if (padded.length >= 75 && padded.length <= 260) {
+          text = padded
+          if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
+          break
+        }
+      }
+    }
+
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length > 10)
+  }).filter(r => r.text.length >= 75)
 }
 
 export async function POST(req: Request) {
