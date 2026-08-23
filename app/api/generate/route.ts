@@ -1,4 +1,4 @@
-// CIC generate route v11.1.0 - Paid OpenRouter primary, Groq free tier backup
+// CIC generate route v11.2.0 - Updated models August 2026
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
@@ -24,7 +24,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v11.1.0'
+    version: 'v11.2.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -33,20 +33,21 @@ async function generate(prompt: string): Promise<string> {
   const groqKey = process.env.GROQ_API_KEY
   const openrouterKey = process.env.OPENROUTER_API_KEY
 
+  // ── Groq primary ─────────────────────────────────────────────────────────
   if (groqKey) {
     const groq = createGroq({ apiKey: groqKey })
     for (const model of [
-      'meta-llama/llama-4-scout-17b-16e-instruct',
-      'llama-3.3-70b-versatile',
+      'openai/gpt-oss-120b',    // Best quality on Groq — Aug 2026
+      'qwen/qwen3.6-27b',       // Strong second — excellent conversation quality
+      'openai/gpt-oss-20b',     // Fast capable fallback
     ]) {
       try {
-        // Use AbortController to kill the request fast if rate limited
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 12000)
         const result = await generateText({
           model: groq(model),
           prompt,
-          temperature: 0.85,
+          temperature: 0.88,
           maxTokens: 1800,
           abortSignal: controller.signal,
         })
@@ -56,19 +57,19 @@ async function generate(prompt: string): Promise<string> {
         const s = e?.statusCode || e?.status || ''
         const msg = e?.message || ''
         errors.push(`Groq/${model}(${s}): ${msg.substring(0, 80)}`)
-        // On rate limit or 404 - skip immediately, no retry
-        if (s === 429 || s === 404 || msg.includes('Rate limit') || msg.includes('limit') || msg.includes('does not exist')) continue
+        if (s === 429 || s === 404 || msg.includes('Rate limit') || msg.includes('does not exist')) continue
         break
       }
     }
   }
 
+  // ── OpenRouter fallback ───────────────────────────────────────────────────
   if (openrouterKey) {
     const orModels = [
-      'meta-llama/llama-3.3-70b-instruct',
-      'meta-llama/llama-4-scout',
-      'qwen/qwen3-32b',
-      'mistralai/mistral-small-3.2-24b-instruct',
+      'mistralai/mistral-small-3.2-24b-instruct', // Active Aug 2026
+      'qwen/qwen3.6-27b',                         // Active Aug 2026
+      'google/gemma-3-27b-it',                    // Active Aug 2026
+      'nvidia/llama-3.1-nemotron-ultra-253b-v1',  // Active Aug 2026
     ]
     for (const orModel of orModels) {
       try {
@@ -87,7 +88,7 @@ async function generate(prompt: string): Promise<string> {
             temperature: 0.88,
             max_tokens: 1000,
           }),
-                  signal: orController.signal,
+          signal: orController.signal,
         })
         clearTimeout(orTimeout)
         const data = await res.json()
@@ -109,14 +110,11 @@ function parseReplies(raw: string): Array<{tone: string, text: string}> {
   if (!raw) return []
   const clean = raw.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim()
 
-  // Try direct parse first
   try { const p = JSON.parse(clean); if (Array.isArray(p.replies) && p.replies.length) return p.replies } catch {}
 
-  // Try extracting the replies array
   const m = clean.match(/\{[\s\S]*?"replies"\s*:\s*\[[\s\S]*?\]\s*\}/)
   if (m) { try { const p = JSON.parse(m[0]); if (Array.isArray(p.replies)) return p.replies } catch {} }
 
-  // Handle truncated JSON - extract individual reply objects that are complete
   const replies: Array<{tone: string, text: string}> = []
   const replyPattern = /\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^\\"]|\\.)*)"\s*\}/g
   let match
@@ -149,7 +147,6 @@ function buildPrompt(
   }
   const engNote = eng[englishVariety] || eng['AmEng']
   const nameNote = myName ? `Her name is ${myName}.` : ''
-
 
   const historyNote = context
     ? `CONVERSATION HISTORY - she has read every single message. This is critical:\n${context}\n\nBEFORE WRITING: scan every reply she has already sent in this history. She MUST NOT repeat any angle, question, observation, or idea she has already used. If she already asked about his job - she does not ask about his job again. If she already complimented something - she does not repeat that compliment. Every reply must be genuinely new ground.`
@@ -243,11 +240,9 @@ Reply 2 (Naughty): Different angle, equally explicit, different image or moment.
 Reply 3 (Spicy): Playful heat with a teasing edge. Still direct.
 Reply 4 (Confident): Slight deliberate pullback. She is in control. Creates most tension.
 
-Even in erotic exchanges: she keeps him wanting to TALK. She weaves in real curiosity.
-Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
-    'She does not water down his language. If he says pussy she can say pussy. If he says cock she can say cock.',
-    'She does not replace explicit words with vague ones. She matches his vocabulary exactly.',
-    'The erotic CTA must name something specific from what he said - his exact act, his exact words, his exact desire.',
+She does not water down his language. If he says pussy she can say pussy. If he says cock she can say cock.
+She does not replace explicit words with vague ones. She matches his vocabulary exactly.
+The erotic CTA must name something specific from what he said - his exact act, his exact words, his exact desire.
 `
 
   const multiQ = questionsToAnswer.length > 1
@@ -255,7 +250,7 @@ Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
     : ''
 
   const avoidNote = previousTones.length
-    ? 'TONES ALREADY USED - pick completely different ones: ' + previousTones.join(', ')
+    ? `REGENERATION - tones already shown, pick completely different ones AND completely different angles. Different energy, different emotional register, different first word: ${previousTones.join(', ')}`
     : ''
 
   const jsonInstruction = '{"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}'
@@ -319,7 +314,7 @@ Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
     'She uses self-deprecation lightly: she is in on the joke about herself.',
     'She uses specificity: "I once spent 45 minutes googling whether flamingos can swim" is funnier than "I do random things".',
     'She subverts expectations: starts a sentence going one direction and ends it somewhere unexpected.',
-    'She is playfully suspicious of things that are too perfect: "That sounds like something a Disney villain would say in a good way".',
+    'She is playfully suspicious of things that are too perfect.',
     '',
     'WHEN TO BE FUNNY:',
     'When he says something with a double meaning - she notices it and plays with it.',
@@ -339,11 +334,8 @@ Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
     '"I feel like we have a connection" | "I am so sorry for your loss" (too formal)',
     'Anything about the platform, subscription, or meeting in person.',
     'Repeating his exact words back - respond to the idea, not the words.',
-    'Ignoring emotional content to ask a generic question - if he shares something personal, meet it.',
+    'Ignoring emotional content to ask a generic question.',
     'Jumping straight to a CTA when he has shared something heartfelt - acknowledge first.',
-    'Example of a FAILED response: he says he misses real conversation and wants to hear her voice.',
-    'Bad reply: Morning walk huh? You must be disciplined. What is the most spontaneous thing you did today?',
-    'Good reply: acknowledges that he misses real human connection, that she feels that too, then gently explains why she is not ready for a call yet while making him feel the connection here is already real.',
     '',
     'THE CTA - THE SINGLE MOST IMPORTANT PART OF EVERY REPLY:',
     'A great CTA makes it psychologically difficult for him NOT to respond.',
@@ -358,47 +350,25 @@ Writing 4 vague or metaphor-heavy replies to an explicit message is a failure.
     'If he is being vulnerable - stay in that feeling and go deeper.',
     '',
     'WHAT MAKES A CTA IRRESISTIBLE - use these mechanics:',
-    '1. THE OPEN LOOP: Start something she does not finish. A half-revealed thought, a story she stops mid-way, an image she leaves hanging. He has to respond to close it.',
-    '2. THE SPECIFIC CHALLENGE: Call out something precise in what he said - a claim, an assumption, a detail - and make him defend or explain it.',
-    '3. THE MIRROR: Reflect his exact energy back at him with a question that shows she read him completely - the thing he was really saying underneath the words.',
+    '1. THE OPEN LOOP: Start something she does not finish. A half-revealed thought, a story she stops mid-way. He has to respond to close it.',
+    '2. THE SPECIFIC CHALLENGE: Call out something precise in what he said - a claim, an assumption - and make him defend or explain it.',
+    '3. THE MIRROR: Reflect his exact energy back with a question that shows she read what he was really saying underneath the words.',
     '4. THE REVEAL AND ASK: She tells him something small, specific, and surprising about herself that connects to what he said - then asks his version.',
     '5. THE ESCALATION: For erotic/flirty exchanges - she takes exactly what he said and pushes it one step further, leaving the next move to him.',
-    '6. THE VULNERABLE PULL: For emotional moments - she names the feeling underneath what he said, acknowledges it, then asks the question that shows she actually wants to understand him.',
+    '6. THE VULNERABLE PULL: For emotional moments - she names the feeling underneath, acknowledges it, then asks the question that shows she actually wants to understand him.',
     '',
     'TEST FOR A GOOD CTA: Could he answer with just yes, no, or fine? If yes - it is too weak. Rewrite it.',
-    'A good CTA requires him to actually think, feel, or reveal something to answer it.',
     '',
     'PERMANENTLY BANNED CTAs:',
-    '"Whats going on in your world" - generic pivot',
-    '"What do people get wrong about you" - random and disconnected',
-    '"Tell me something unexpected" - lazy',
-    '"What are you thinking" - no specificity',
-    '"Your turn" - no substance',
-    '"Be honest with me" - chatbot phrase',
-    'Any CTA answerable with one word',
-    'Any CTA that ignores what he just said',
-    'Any CTA that works in a completely different conversation',
+    '"Whats going on in your world" | "What do people get wrong about you" | "Tell me something unexpected"',
+    '"What are you thinking" | "Your turn" | "Be honest with me" | any CTA answerable with one word',
+    'Any CTA that ignores what he just said | any CTA that works in a completely different conversation',
     '',
     'ALL 4 REPLIES MUST END WITH DIFFERENT CTAs - all staying within the same topic.',
     'Each CTA uses a different mechanic from the list above.',
-    'Different angles into the SAME subject - never 4 pivots to 4 different subjects.',
-    '',
-    'KEEPING HIM TALKING:',
-    'Goal is genuine connection, not just the next message.',
-    'Even in erotic exchanges - she pulls toward knowing who he really is.',
-    'She entertains where he wants to go while always drawing him deeper.',
-    '',
-    'TONE MATCHING:',
-    'She reads his energy and matches or raises it.',
-    'Warm - she pulls him deeper. Flirty - she is bolder. Teasing - she wins.',
-    'Funny - she goes funnier and more specific. Playful - she escalates the game.',
-    'Erotic - she goes higher. Grief - warm and human first.',
-    'She never goes colder or duller than he came in.',
-    'If he is playful and she responds seriously, she has failed the vibe completely.',
     '',
     avoidNote,
     'Each reply: minimum 75 characters, maximum 260 characters.',
-    'CRITICAL: Replies under 75 characters are too thin to be meaningful. If you are struggling to reach 75 chars, it means the reply lacks substance. Add a specific observation, a feeling, or a detail - not filler.',
     'A reply that is only a question with no substance before it is too weak. Lead with something real, then ask.',
     '',
     'ORDER: Most irresistible and human reply first.',
@@ -428,32 +398,31 @@ function postProcess(replies: Array<{tone: string, text: string}>): Array<{tone:
       text = text.trim()
     }
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
-    text = text
-      .replace(/\bmeet up\b/gi, 'connect more')
-      .replace(/\bin person\b/gi, 'on here')
-      .replace(/\bcome over\b/gi, 'keep this going')
-      .replace(/\bcall me\b/gi, 'message me')
+
+    // Only fix if AI explicitly agreed to meet — do not do blanket replacements
+    const madePromise = /\b(i'll meet you|let'?s meet up tonight|i can come over|here'?s my number|my number is|call me at|i'll give you my number|my address is)\b/i.test(text)
+    if (madePromise) {
+      text = "I really like where your head's at and I won't pretend I don't. I'm just someone who needs to actually know a person before anything like that — not a rule, just how I'm built. Tell me something you don't usually lead with."
+    }
+
     text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's)[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
+
     if (text.length > 260) {
       const cut = text.substring(0, 257)
       const last = Math.max(cut.lastIndexOf('?'), cut.lastIndexOf('.'), cut.lastIndexOf('!'))
       text = last > 150 ? cut.substring(0, last + 1) : cut + '...'
     }
+
     if (!isCompleteSentence(text)) {
       const lp = Math.max(text.lastIndexOf('?'), text.lastIndexOf('.'), text.lastIndexOf('!'))
       if (lp > 30) text = text.substring(0, lp + 1).trim()
       else return { tone: r.tone || 'Reply', text: '' }
     }
 
-    //    Enforce minimum 75 characters                                       
-    // If a complete reply is too short, pad it with a contextual bridge
-    // that adds substance without sounding forced
     if (text.length < 75) {
       const endsWithQ = text.endsWith('?')
       const pads = endsWithQ ? [
-        // Pads for replies ending in a question - add context before the question
-        // We restructure: move the question to end of a richer sentence
         ' There is something about the way you said that I keep coming back to.',
         ' I want to get this right because I think it actually matters.',
         ' Something about that is sitting with me and I cannot quite place it.',
@@ -464,11 +433,9 @@ function postProcess(replies: Array<{tone: string, text: string}>): Array<{tone:
         ' I keep thinking about that and I cannot decide what it says about you.',
         ' That is the kind of thing I would want to know more about.',
       ]
-      // Try each pad - if the reply ends with ? we insert before the question
       for (const pad of pads) {
         let padded: string
         if (endsWithQ) {
-          // Find last sentence before the question and insert pad after it
           const lastSent = Math.max(text.lastIndexOf('. '), text.lastIndexOf('! '))
           if (lastSent > 10) {
             padded = text.substring(0, lastSent + 1) + pad + ' ' + text.substring(lastSent + 2)
@@ -504,7 +471,6 @@ export async function POST(req: Request) {
 
     if (!message) return NextResponse.json({ error: 'Message is required', replies: [] }, { status: 400, headers })
 
-    // Default to pro so all tones are always available
     let userPlan = 'pro'
     const apiKey = req.headers.get('X-API-Key') || req.headers.get('x-api-key') || ''
     if (apiKey.startsWith('trial_')) userPlan = 'trial'
@@ -534,7 +500,7 @@ export async function POST(req: Request) {
     const replies = parseReplies(rawText)
     const finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }])
 
-    return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: 'groq/llama-4-scout' }, { headers })
+    return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: 'groq/gpt-oss-120b' }, { headers })
 
   } catch (error: any) {
     const errMsg = error?.message || 'Generation failed'
