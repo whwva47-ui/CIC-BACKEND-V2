@@ -32,14 +32,15 @@ async function generate(prompt: string): Promise<string> {
   const errors: string[] = []
   const groqKey = process.env.GROQ_API_KEY
   const openrouterKey = process.env.OPENROUTER_API_KEY
+  const googleKey = process.env.GOOGLE_AI_API_KEY
 
   // ── Groq primary ─────────────────────────────────────────────────────────
   if (groqKey) {
     const groq = createGroq({ apiKey: groqKey })
     for (const model of [
-      'openai/gpt-oss-120b',    // Best quality on Groq — Aug 2026
-      'qwen/qwen3.6-27b',       // Strong second — excellent conversation quality
-      'openai/gpt-oss-20b',     // Fast capable fallback
+      'openai/gpt-oss-120b',                          // Best quality — Aug 2026
+      'openai/gpt-oss-20b',                           // Strong second
+      'meta-llama/llama-4-maverick-17b-128e-instruct', // Good quality, separate bucket
     ]) {
       try {
         const controller = new AbortController()
@@ -52,12 +53,19 @@ async function generate(prompt: string): Promise<string> {
           abortSignal: controller.signal,
         })
         clearTimeout(timeout)
-        if (result.text) { console.log('[CIC] Groq:', model); return result.text }
+        if (result.text) {
+          const clean = result.text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+          if (clean) { console.log('[CIC] Groq:', model); return clean }
+        }
       } catch (e: any) {
         const s = e?.statusCode || e?.status || ''
         const msg = e?.message || ''
         errors.push(`Groq/${model}(${s}): ${msg.substring(0, 80)}`)
-        if (s === 429 || s === 404 || msg.includes('Rate limit') || msg.includes('does not exist')) continue
+        // On rate limit — skip immediately to next model, no delay
+        if (s === 429 || msg.includes('Rate limit') || msg.includes('rate limit')) continue
+        // On model not found — skip immediately
+        if (s === 404 || msg.includes('does not exist') || msg.includes('not found')) continue
+        // On other errors — break and try next provider
         break
       }
     }
@@ -66,10 +74,9 @@ async function generate(prompt: string): Promise<string> {
   // ── OpenRouter fallback ───────────────────────────────────────────────────
   if (openrouterKey) {
     const orModels = [
-      'mistralai/mistral-small-3.2-24b-instruct', // Active Aug 2026
-      'qwen/qwen3.6-27b',                         // Active Aug 2026
-      'google/gemma-3-27b-it',                    // Active Aug 2026
-      'nvidia/llama-3.1-nemotron-ultra-253b-v1',  // Active Aug 2026
+      'google/gemma-3-27b-it',                      // Quality — 27B model
+      'mistralai/mistral-small-3.2-24b-instruct',   // Quality — 24B model
+      'microsoft/phi-4-reasoning-plus:free',         // Quality reasoning model
     ]
     for (const orModel of orModels) {
       try {
@@ -87,13 +94,18 @@ async function generate(prompt: string): Promise<string> {
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.88,
             max_tokens: 1000,
+            // Disable thinking mode for models that support it (Qwen, DeepSeek)
+            chat_template_kwargs: { thinking: false },
           }),
           signal: orController.signal,
         })
         clearTimeout(orTimeout)
         const data = await res.json()
         const text = data?.choices?.[0]?.message?.content
-        if (text) { console.log('[CIC] OpenRouter:', orModel); return text }
+        if (text) {
+          const cleanText = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+          if (cleanText) { console.log('[CIC] OpenRouter:', orModel); return cleanText }
+        }
         const errCode = data?.error?.code || data?.error?.status || 0
         errors.push(`OpenRouter/${orModel}: ${JSON.stringify(data?.error || 'empty').substring(0, 60)}`)
         if (errCode !== 429 && errCode !== 503) break
@@ -103,12 +115,42 @@ async function generate(prompt: string): Promise<string> {
     }
   }
 
+  // ── Google Gemini fallback ────────────────────────────────────────────────
+  if (googleKey) {
+    for (const geminiModel of ['gemini-1.5-pro', 'gemini-1.5-flash']) {
+      try {
+        const gemCtrl = new AbortController()
+        const gemTimeout = setTimeout(() => gemCtrl.abort(), 15000)
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${googleKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.88, maxOutputTokens: 1000 }
+          }),
+          signal: gemCtrl.signal,
+        })
+        clearTimeout(gemTimeout)
+        const data = await res.json()
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
+        if (text) { console.log('[CIC] Gemini:', geminiModel); return text }
+        errors.push(`Gemini/${geminiModel}: ${JSON.stringify(data?.error || 'empty').substring(0, 60)}`)
+      } catch (e: any) {
+        errors.push(`Gemini/${geminiModel}: ${e?.message?.substring(0, 60)}`)
+      }
+    }
+  }
+
+  // All providers exhausted — return a safe fallback so the app never crashes
+  console.error('[CIC] All providers failed:', errors.join(' | '))
   throw new Error('All providers failed: ' + errors.join(' | '))
 }
 
 function parseReplies(raw: string): Array<{tone: string, text: string}> {
   if (!raw) return []
-  const clean = raw.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim()
+  // Strip chain-of-thought thinking blocks (Qwen, DeepSeek, o1-style models)
+  let clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  clean = clean.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim()
 
   try { const p = JSON.parse(clean); if (Array.isArray(p.replies) && p.replies.length) return p.replies } catch {}
 
@@ -569,7 +611,7 @@ export async function POST(req: Request) {
       ].join('\n')
       const raw = await generate(rp)
       try {
-        const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
+        const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
         const parsed = JSON.parse(clean)
         return NextResponse.json({ replies: (parsed.triggers || []).map((t: any) => ({ tone: t.label, text: t.text })), analysis: parsed.analysis || '', isReengage: true }, { headers })
       } catch {
@@ -579,7 +621,15 @@ export async function POST(req: Request) {
 
     const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer)
     const rawText = await generate(prompt)
-    const replies = parseReplies(rawText)
+    // Strip thinking blocks before parsing — some models output <think>...</think>
+    // Nuclear strip — catches think blocks from ANY model regardless of source
+    const cleanedText = rawText
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
+      .replace(/\[REASONING\][\s\S]*?\[\/REASONING\]/gi, '')
+      .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+      .trim()
+    const replies = parseReplies(cleanedText)
     const finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }])
 
     return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: 'groq/gpt-oss-120b' }, { headers })
@@ -587,6 +637,16 @@ export async function POST(req: Request) {
   } catch (error: any) {
     const errMsg = error?.message || 'Generation failed'
     console.error('[CIC] Error:', errMsg)
+    // Return a soft fallback so the operator sees something rather than nothing
+    const isRateLimit = errMsg.includes('Rate limit') || errMsg.includes('429') || errMsg.includes('All providers failed')
+    if (isRateLimit) {
+      return NextResponse.json({
+        error: 'All AI providers are busy right now. Please wait 30 seconds and try again.',
+        replies: [],
+        remaining: 999,
+        retryAfter: 30
+      }, { status: 200, headers })
+    }
     return NextResponse.json({ error: errMsg, replies: [], remaining: 999 }, { status: 200, headers })
   }
 }
