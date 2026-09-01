@@ -315,8 +315,14 @@ She does not replace explicit words with vague ones. She matches his vocabulary 
 The erotic CTA must name something specific from what he said - his exact act, his exact words, his exact desire.
 `
 
-  const multiQ = questionsToAnswer.length > 1
-    ? `HE ASKED MULTIPLE QUESTIONS - she must answer ALL of them naturally:\n${questionsToAnswer.map((q, i) => (i + 1) + '. ' + q).join('\n')}\n`
+  const hasQuestions = questionsToAnswer.length > 0
+  const multiQ = hasQuestions
+    ? `HE HAS ASKED THE FOLLOWING — she must address ALL of them naturally before her CTA:
+${questionsToAnswer.map((q, i) => (i + 1) + '. ' + q).join('\n')}
+
+CRITICAL: She answers these questions as a real woman would — personally, specifically, with her own perspective and a detail that only she would give. Not a list. Woven naturally into her reply.
+After answering — her CTA must grow directly from ONE of his questions, going deeper into that same topic. She does not pivot to something new after answering him. She picks the most interesting question he asked and pulls him deeper into it.
+`
     : ''
 
   const avoidNote = previousTones.length
@@ -587,7 +593,12 @@ export async function POST(req: Request) {
     const body = await req.json()
     const message = ((body.message || '') + '').replace(/[\x00-\x1F\x7F-\x9F]/g, ' ').trim()
     const pageContext = body.pageContext || {}
-    const context = (pageContext.conversationSummary || '').toString().substring(0, 2000)
+    // Keep more context — prioritise recent messages, they matter most
+    const fullContext = (pageContext.conversationSummary || '').toString()
+    // If over limit, keep the end (most recent) not the beginning
+    const context = fullContext.length > 3500
+      ? '...[earlier messages]...\n' + fullContext.slice(-3200)
+      : fullContext
     const questionsToAnswer: string[] = Array.isArray(pageContext.questionsToAnswer) ? pageContext.questionsToAnswer as string[] : []
     const previousTones = Array.isArray(body.previousTones) ? body.previousTones : []
     const englishVariety = (body.englishVariety || 'AmEng').toString()
