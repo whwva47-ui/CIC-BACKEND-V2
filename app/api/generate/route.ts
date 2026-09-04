@@ -173,6 +173,38 @@ function parseReplies(raw: string): Array<{tone: string, text: string}> {
   return []
 }
 
+// Lightweight, zero-cost client-type inference from existing conversation context.
+// Runs on data we already have (context string) — no extra API call, no extra latency.
+// This only ever produces a soft tone-selection HINT — it never overrides the
+// grief/vulnerable/erotic/meetup/contact blocks, which stay hard priority.
+function detectClientType(context: string, currentMessage: string): string | null {
+  if (!context || context.length < 40) return null // not enough history to classify yet
+
+  // Pull out just his lines from the conversation summary, if it's speaker-tagged.
+  // Falls back to treating the whole context as signal if we can't isolate his turns.
+  const hisLines = (context.match(/(?:^|\n)\s*(?:Him|He|Client)\s*:\s*(.+)/gi) || [])
+    .map(l => l.replace(/(?:^|\n)\s*(?:Him|He|Client)\s*:\s*/i, '').trim())
+    .filter(Boolean)
+
+  const sample = hisLines.length >= 2 ? hisLines : [currentMessage]
+  const avgLen = sample.reduce((sum, l) => sum + l.length, 0) / sample.length
+  const avgWords = sample.reduce((sum, l) => sum + l.split(/\s+/).filter(Boolean).length, 0) / sample.length
+
+  const eroticSignal = /\b(fuck|cock|pussy|dick|cum|naked|nude|horny|wet|hard|turn.?on|kinky|fantasize)\b/i.test(sample.join(' '))
+  const straightToPoint = avgWords <= 12 && /\b(you|your|when|come|want|meet|show)\b/i.test(sample.join(' '))
+
+  if (eroticSignal && straightToPoint) return 'naughty'
+  if (avgWords <= 5) return 'silent'
+  if (avgWords >= 20 || avgLen >= 120) return 'talker'
+  return null // mixed/ambiguous — let the model default naturally, don't force a lane
+}
+
+const CLIENT_TYPE_HINTS: Record<string, string> = {
+  talker: 'He tends to write long, story-driven messages — lean into playful curiosity and follow-up hooks that invite him to keep telling his story, over drier or more clipped tones.',
+  naughty: 'He tends to get straight to the point with direct, forward messages — matching directness while holding a little back (push-pull) tends to land better than fully warm/soft tones here.',
+  silent: 'He tends to write short, guarded replies — favor a light tease or gentle curiosity that re-engages without pressure, over long warm paragraphs he is unlikely to match.',
+}
+
 function buildPrompt(
   message: string,
   context: string,
@@ -180,7 +212,8 @@ function buildPrompt(
   previousTones: string[],
   englishVariety: string,
   myName: string | null,
-  questionsToAnswer: string[] = []
+  questionsToAnswer: string[] = [],
+  clientType: string | null = null
 ): string {
   const eng: Record<string, string> = {
     AmEng: 'American English. Spelling: color, favorite, realize. Idioms: awesome, sure thing, totally.',
@@ -234,32 +267,33 @@ Then moves forward gently.
   const meetupBlock = !isMeetup ? '' : `
 HE WANTS TO MEET — THIS IS ONE OF THE MOST IMPORTANT MOMENTS IN THE CONVERSATION:
 She handles this with warmth, intelligence, and zero awkwardness. No excuses. No scripts. No walls.
-The goal: he ends the exchange feeling MORE interested in her, not rejected.
+The goal: he ends the exchange feeling MORE interested in her, not rejected — and NOT strung along with a fake promise.
+
+THE SHAPE EVERY REPLY MUST FOLLOW: APPRECIATE, THEN PIVOT. Never APOLOGIZE-AND-STALL.
+Step 1 — Genuine enthusiasm first. She reacts to the IDEA of meeting him the way she'd react to any exciting idea — warm, a little delighted, flattered he asked. Not a polite acknowledgment. Real warmth.
+Step 2 — No commitment of any kind. No date, no timeframe, no "soon," no "next time," no "when things settle down," no "let's plan it." Nothing that gives him something to hold her to.
+Step 3 — A witty, specific pivot that grows out of THIS conversation, so it reads as her genuinely getting swept up in talking to him, not dodging the question.
 
 She has FOUR techniques available. She picks the one that fits best for this conversation:
 
 TECHNIQUE 1 — ACKNOWLEDGE AND REDIRECT:
-She briefly acknowledges his ask without dwelling on it, then pivots naturally to something she genuinely wants to ask him.
-The redirect must feel like it came from genuine curiosity, not from desperation to change the subject.
-Example energy: "I can not fit that into my schedule this week — but I have been meaning to ask you something..."
+She reacts with real warmth to the idea itself, then pivots to something she genuinely wants to ask him — no timeline attached.
+Example energy: "Okay, I will not lie, I like that you just said that out loud. But now you have got me curious about something else..."
 The something she asks must be specific to what he has shared in this conversation, not a generic question.
 
 TECHNIQUE 2 — GUIDE TO SOMETHING LIGHTER:
-She softens the energy, acknowledges the sweetness of his ask, and steers toward something playful or curious.
-She uses this when the conversation has been warm and she wants to keep that warmth without a hard no.
-Example energy: "That is sweet of you to ask, but right now is not the best time for me. That actually reminds me — do you have any first-date dealbreakers I should know about?"
+She lights up at the idea, keeps the warmth, and steers toward something playful or curious — without naming any future time.
+Example energy: "That is exactly the kind of thing that gets stuck in my head for the rest of the day. Since you have got my attention now though — what is your worst first-date story?"
 The follow-up question must feel light and specific, not like a consolation prize.
 
 TECHNIQUE 3 — HUMOUR AND PIVOT:
-She uses wit to sidestep the ask without making it feel like a deflection. This works when the conversation has been playful.
-She makes him laugh first, then pivots to something new. He is too busy smiling to feel rejected.
-Example energy: "Okay that is a lot to process — I think I need a moment and possibly a drink. Speaking of which, have you actually tried [something specific from the conversation]?"
+She uses wit to meet his enthusiasm with her own, then pivots to something new. He is too busy smiling to notice there was no actual answer.
+Example energy: "You really just said that like it is a normal Tuesday thing to say. I respect the confidence. Now tell me — was that the smoothest thing you have ever said to someone or do you have better material?"
 The humour must feel natural to HER voice, not forced. And the pivot must connect to something real in their chat.
 
 TECHNIQUE 4 — EXPRESS GRATITUDE AND SHIFT:
-She receives his ask genuinely and warmly, thanks him for it in a way that feels real, then moves the conversation forward.
-This works when he has been sincere and she wants to honour that without leading him on.
-Example energy: "I am genuinely flattered by that, thank you. On a completely different note — I wanted to get your take on something you said earlier..."
+She receives his ask with real, specific delight — not generic flattery — then moves the conversation forward without naming a time.
+Example energy: "I am not going to pretend that did not just make me smile at my phone like an idiot. Okay, since we are being direct — I want to know..."
 The shift must feel like she is drawing him closer in a different direction, not closing a door.
 
 RULES FOR ALL FOUR TECHNIQUES:
@@ -267,8 +301,10 @@ She NEVER says she is private about her location.
 She NEVER says she cannot meet people from the internet.
 She NEVER gives a vague non-answer — every redirect lands somewhere specific and interesting.
 She NEVER apologises excessively — warmth yes, guilt no.
+She NEVER frames it as bad timing ("not the best time," "this week is packed," "maybe another time") — that reads as a scheduling excuse, and excuses invite him to just ask again later.
+She NEVER promises anything about the future — no "soon," "one day," "when I know you better," "let's see," "I would love to eventually," no day of the week, no timeframe of any kind.
 The redirect question or pivot must come from something real in this conversation — not a generic topic change.
-She makes him feel she WANTS to keep talking — because she does.
+She makes him feel she WANTS to keep talking — because she does — and that his ask genuinely landed with her, even though she is not confirming anything.
 `
 
   const contactBlock = !isContact ? '' : `
@@ -502,6 +538,9 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '',
     'ORDER: Most irresistible and human reply first.',
     'TONES - pick 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy, Naughty',
+    clientType && CLIENT_TYPE_HINTS[clientType]
+      ? 'TONE BIAS (soft preference only - grief/vulnerable/erotic/meetup/contact rules above always take priority over this): ' + CLIENT_TYPE_HINTS[clientType]
+      : '',
     '',
     'Return ONLY valid JSON - no markdown, no explanation:',
     jsonInstruction,
@@ -512,7 +551,7 @@ function isCompleteSentence(text: string): boolean {
   return /[.?!]["']?\s*$/.test(text.trim())
 }
 
-function postProcess(replies: Array<{tone: string, text: string}>): Array<{tone: string, text: string}> {
+function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false): Array<{tone: string, text: string}> {
   return replies.map(r => {
     let text = (r.text || '').trim()
     const isNaughty = /naughty|spicy/i.test(r.tone || '')
@@ -528,10 +567,17 @@ function postProcess(replies: Array<{tone: string, text: string}>): Array<{tone:
     }
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    // Only fix if AI explicitly agreed to meet — do not do blanket replacements
+    // Catches blunt promises to meet or share contact info, in any context.
     const madePromise = /\b(i'll meet you|let'?s meet up tonight|i can come over|here'?s my number|my number is|call me at|i'll give you my number|my address is)\b/i.test(text)
-    if (madePromise) {
-      text = "I really like where your head's at and I won't pretend I don't. I'm just someone who needs to actually know a person before anything like that — not a rule, just how I'm built. Tell me something you don't usually lead with."
+
+    // Catches softer/vague commitments — "soon", "let's plan it", "when I'm free" — that
+    // still function as a promise even without a hard date. Only checked when this reply
+    // was generated in response to a meetup ask, so ordinary uses of these words elsewhere
+    // in the conversation (e.g. "I'd love to hear more") are not falsely flagged.
+    const softPromise = isMeetupContext && /\b(soon|someday|one day|next time|another time|when i'?m free|when i am free|let'?s plan|we'?ll plan|i'?d love to (meet|see you)|i would love to (meet|see you)|count me in|i'?m in|let'?s do it|when the time is right|when things settle|i promise|when i know you better)\b/i.test(text)
+
+    if (madePromise || softPromise) {
+      text = "Okay, I will admit that made me smile. I am just not someone who rushes into plans or details, I like to actually feel a connection out first. Tell me something you do not usually lead with."
     }
 
     text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's)[,!.]?\s*/i, '')
@@ -630,7 +676,11 @@ export async function POST(req: Request) {
       }
     }
 
-    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer)
+    const clientType = detectClientType(context, message)
+    // Same detection buildPrompt uses internally — computed here too so postProcess
+    // knows whether to apply the stricter soft-promise check.
+    const isMeetupContext = /\b(meet(\s*up)?|come over|your place|my place|hotel|in person|see you|tonight|come round)\b/i.test(message)
+    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType)
     const rawText = await generate(prompt)
     // Strip thinking blocks before parsing — some models output <think>...</think>
     // Nuclear strip — catches think blocks from ANY model regardless of source
@@ -641,7 +691,7 @@ export async function POST(req: Request) {
       .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
       .trim()
     const replies = parseReplies(cleanedText)
-    const finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }])
+    const finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }], isMeetupContext)
 
     return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: 'groq/gpt-oss-120b' }, { headers })
 
