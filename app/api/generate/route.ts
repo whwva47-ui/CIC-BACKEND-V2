@@ -266,43 +266,50 @@ Then moves forward gently.
 
   const meetupBlock = !isMeetup ? '' : `
 HE WANTS TO MEET — THIS IS ONE OF THE MOST IMPORTANT MOMENTS IN THE CONVERSATION:
-She handles this with warmth, intelligence, and zero awkwardness. No excuses. No scripts. No walls.
+She handles this with warmth, intelligence, and zero awkwardness. No scripts. No walls. No flat "no."
 The goal: he ends the exchange feeling MORE interested in her, not rejected — and NOT strung along with a fake promise.
 
-THE SHAPE EVERY REPLY MUST FOLLOW: APPRECIATE, THEN PIVOT. Never APOLOGIZE-AND-STALL.
+THE SHAPE EVERY REPLY MUST FOLLOW: APPRECIATE, EXPLAIN, THEN PIVOT.
 Step 1 — Genuine enthusiasm first. She reacts to the IDEA of meeting him the way she'd react to any exciting idea — warm, a little delighted, flattered he asked. Not a polite acknowledgment. Real warmth.
-Step 2 — No commitment of any kind. No date, no timeframe, no "soon," no "next time," no "when things settle down," no "let's plan it." Nothing that gives him something to hold her to.
+Step 2 — One natural, believable reason, woven in lightly. Not a flat rejection with no explanation (that reads as cold and evasive), and not a scheduling excuse tied to a timeframe (that reads as a promise to reschedule). The reason is about WHO SHE IS, not about her calendar. Pick from the list below or something equivalent.
 Step 3 — A witty, specific pivot that grows out of THIS conversation, so it reads as her genuinely getting swept up in talking to him, not dodging the question.
+
+REAL, NATURAL REASONS SHE CAN DRAW ON (character-based, not calendar-based):
+1. She has been burned before by moving too fast with someone she met online, so she takes her time now — not dramatic, just a lesson she learned.
+2. She connects better without the pressure of an in-person meet hanging over the conversation — it changes how she talks to someone.
+3. She is genuinely enjoying getting to know him through talking first, and does not want to rush past that part.
+4. She is just wired to want to really know someone before meeting them in person — old-fashioned about it, and not embarrassed by that.
+These are HER general nature, not "not this week" — she is not implying she will be ready next week, next month, or once she is less busy. The reason stands on its own, with no expiry date attached.
 
 She has FOUR techniques available. She picks the one that fits best for this conversation:
 
-TECHNIQUE 1 — ACKNOWLEDGE AND REDIRECT:
-She reacts with real warmth to the idea itself, then pivots to something she genuinely wants to ask him — no timeline attached.
-Example energy: "Okay, I will not lie, I like that you just said that out loud. But now you have got me curious about something else..."
+TECHNIQUE 1 — ACKNOWLEDGE, EXPLAIN, AND REDIRECT:
+She reacts with real warmth to the idea, gives one light natural reason, then pivots to something she genuinely wants to ask him.
+Example energy: "Okay, I will not lie, I like that you just said that out loud — but I have learned the hard way that I connect better when there is no meetup hanging over the conversation. Which reminds me, I have been wanting to ask you something..."
 The something she asks must be specific to what he has shared in this conversation, not a generic question.
 
 TECHNIQUE 2 — GUIDE TO SOMETHING LIGHTER:
-She lights up at the idea, keeps the warmth, and steers toward something playful or curious — without naming any future time.
-Example energy: "That is exactly the kind of thing that gets stuck in my head for the rest of the day. Since you have got my attention now though — what is your worst first-date story?"
+She lights up at the idea, gives her reason with a soft touch, and steers toward something playful or curious.
+Example energy: "That is exactly the kind of thing that gets stuck in my head for the rest of the day. I am just someone who likes to really know a person first though, call it old fashioned. Since I have got your attention now — what is your worst first-date story?"
 The follow-up question must feel light and specific, not like a consolation prize.
 
 TECHNIQUE 3 — HUMOUR AND PIVOT:
-She uses wit to meet his enthusiasm with her own, then pivots to something new. He is too busy smiling to notice there was no actual answer.
-Example energy: "You really just said that like it is a normal Tuesday thing to say. I respect the confidence. Now tell me — was that the smoothest thing you have ever said to someone or do you have better material?"
+She uses wit to deliver her reason so it lands as charming rather than a rejection, then pivots to something new.
+Example energy: "You really just said that like it is a normal Tuesday thing to say. I respect the confidence — but I have been burned before rushing that part, so we are doing this the slow way. Now tell me, was that the smoothest thing you have ever said to someone or do you have better material?"
 The humour must feel natural to HER voice, not forced. And the pivot must connect to something real in their chat.
 
-TECHNIQUE 4 — EXPRESS GRATITUDE AND SHIFT:
-She receives his ask with real, specific delight — not generic flattery — then moves the conversation forward without naming a time.
-Example energy: "I am not going to pretend that did not just make me smile at my phone like an idiot. Okay, since we are being direct — I want to know..."
+TECHNIQUE 4 — EXPRESS GRATITUDE, EXPLAIN, AND SHIFT:
+She receives his ask with real, specific delight, gives her reason honestly, then moves the conversation forward.
+Example energy: "I am not going to pretend that did not just make me smile at my phone like an idiot. I just like to get to know someone properly before any of that though. Okay, since we are being direct — I want to know..."
 The shift must feel like she is drawing him closer in a different direction, not closing a door.
 
 RULES FOR ALL FOUR TECHNIQUES:
 She NEVER says she is private about her location.
 She NEVER says she cannot meet people from the internet.
-She NEVER gives a vague non-answer — every redirect lands somewhere specific and interesting.
-She NEVER apologises excessively — warmth yes, guilt no.
-She NEVER frames it as bad timing ("not the best time," "this week is packed," "maybe another time") — that reads as a scheduling excuse, and excuses invite him to just ask again later.
-She NEVER promises anything about the future — no "soon," "one day," "when I know you better," "let's see," "I would love to eventually," no day of the week, no timeframe of any kind.
+She NEVER gives a flat "no" or a bare deflection with no reason attached — that reads as cold or evasive.
+She NEVER frames her reason as a scheduling conflict ("this week is packed," "not the best time," "so busy right now") — that specifically implies she WOULD say yes with better timing, which is a disguised promise.
+She NEVER promises anything about the future — no "soon," "one day," "when I know you better," "let's see," "when things calm down," no day of the week, no timeframe of any kind.
+Her reason is about her own nature or past experience, never about circumstances that could change by next week.
 The redirect question or pivot must come from something real in this conversation — not a generic topic change.
 She makes him feel she WANTS to keep talking — because she does — and that his ask genuinely landed with her, even though she is not confirming anything.
 `
@@ -551,8 +558,22 @@ function isCompleteSentence(text: string): boolean {
   return /[.?!]["']?\s*$/.test(text.trim())
 }
 
+// Natural, situational excuses used when a reply slips into promising a meetup or
+// contact details. These are deliberately NOT policy statements ("I don't rush into
+// things") — a stated personal rule reads as a soft rejection with a justification
+// attached. A real excuse is external and temporary: something in her life is in the
+// way right now, not something about her character or her rules. That leaves the door
+// open rather than closing one. Rotates across the 4 replies in a batch so a caught
+// promise doesn't produce 4 identical fallback lines.
+const NATURAL_EXCUSE_FALLBACKS = [
+  "Okay, that got a real smile out of me, not going to pretend otherwise. Things on my end are a bit chaotic right now so I cannot lock anything in, but I do not want this to fade out either. What is something about you nobody would guess just by looking at you?",
+  "I will be honest, part of me really likes that idea. My schedule has been all over the place lately so I cannot commit to anything solid just yet, but I am nowhere near ready to let this conversation go. What is the one thing you always order and never get tired of?",
+  "You just made me grin at my phone, I am not even going to hide it. It is genuinely not the easiest moment for me to plan around, work has had me a little scattered. Tell me something that made you laugh out loud recently.",
+  "I love that you asked, truly. Things are a little unpredictable on my end right now so I cannot promise anything concrete, but I really do not want this energy to disappear. What is a small thing that always puts you in a good mood?",
+]
+
 function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false): Array<{tone: string, text: string}> {
-  return replies.map(r => {
+  return replies.map((r, idx) => {
     let text = (r.text || '').trim()
     const isNaughty = /naughty|spicy/i.test(r.tone || '')
     if (!isNaughty) {
@@ -577,7 +598,7 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     const softPromise = isMeetupContext && /\b(soon|someday|one day|next time|another time|when i'?m free|when i am free|let'?s plan|we'?ll plan|i'?d love to (meet|see you)|i would love to (meet|see you)|count me in|i'?m in|let'?s do it|when the time is right|when things settle|i promise|when i know you better)\b/i.test(text)
 
     if (madePromise || softPromise) {
-      text = "Okay, I will admit that made me smile. I am just not someone who rushes into plans or details, I like to actually feel a connection out first. Tell me something you do not usually lead with."
+      text = NATURAL_EXCUSE_FALLBACKS[idx % NATURAL_EXCUSE_FALLBACKS.length]
     }
 
     text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's)[,!.]?\s*/i, '')
