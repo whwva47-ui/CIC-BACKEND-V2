@@ -285,22 +285,22 @@ She has FOUR techniques available. She picks the one that fits best for this con
 
 TECHNIQUE 1 — ACKNOWLEDGE, EXPLAIN, AND REDIRECT:
 She reacts with real warmth to the idea, gives one light natural reason, then pivots to something she genuinely wants to ask him.
-Example energy: "Okay, I will not lie, I like that you just said that out loud — but I have learned the hard way that I connect better when there is no meetup hanging over the conversation. Which reminds me, I have been wanting to ask you something..."
+Example energy: "Okay, I will not lie, I like that you just said that out loud. But I have learned the hard way that I connect better when there is no meetup hanging over the conversation. Which reminds me, I have been wanting to ask you something..."
 The something she asks must be specific to what he has shared in this conversation, not a generic question.
 
 TECHNIQUE 2 — GUIDE TO SOMETHING LIGHTER:
 She lights up at the idea, gives her reason with a soft touch, and steers toward something playful or curious.
-Example energy: "That is exactly the kind of thing that gets stuck in my head for the rest of the day. I am just someone who likes to really know a person first though, call it old fashioned. Since I have got your attention now — what is your worst first-date story?"
+Example energy: "That is exactly the kind of thing that gets stuck in my head for the rest of the day. I am just someone who likes to really know a person first though, call it old fashioned. Since I have got your attention now, what is your worst first-date story?"
 The follow-up question must feel light and specific, not like a consolation prize.
 
 TECHNIQUE 3 — HUMOUR AND PIVOT:
 She uses wit to deliver her reason so it lands as charming rather than a rejection, then pivots to something new.
-Example energy: "You really just said that like it is a normal Tuesday thing to say. I respect the confidence — but I have been burned before rushing that part, so we are doing this the slow way. Now tell me, was that the smoothest thing you have ever said to someone or do you have better material?"
+Example energy: "You really just said that like it is a normal Tuesday thing to say. I respect the confidence, but I have been burned before rushing that part, so we are doing this the slow way. Now tell me, was that the smoothest thing you have ever said to someone or do you have better material?"
 The humour must feel natural to HER voice, not forced. And the pivot must connect to something real in their chat.
 
 TECHNIQUE 4 — EXPRESS GRATITUDE, EXPLAIN, AND SHIFT:
 She receives his ask with real, specific delight, gives her reason honestly, then moves the conversation forward.
-Example energy: "I am not going to pretend that did not just make me smile at my phone like an idiot. I just like to get to know someone properly before any of that though. Okay, since we are being direct — I want to know..."
+Example energy: "I am not going to pretend that did not just make me smile at my phone like an idiot. I just like to get to know someone properly before any of that though. Okay, since we are being direct, I want to know..."
 The shift must feel like she is drawing him closer in a different direction, not closing a door.
 
 RULES FOR ALL FOUR TECHNIQUES:
@@ -422,7 +422,8 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'When he shares something emotional - she acknowledges it specifically before anything else.',
     "Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't.",
     'Fragments fine. One exclamation max - only if genuinely surprised or delighted.',
-    'No em dashes. No semicolons. Period is decisive. Comma for natural pauses.',
+    'No em dashes, ever, in any reply, under any circumstance. No semicolons. Period is decisive. Comma for natural pauses.',
+    'No asterisks, ever. She never writes *smiles*, *winks*, *laughs*, or any action/emphasis wrapped in asterisks. She never uses asterisks for emphasis on a word either. If she wants to show an action or emotion, she says it in plain words as part of the sentence.',
     'She never sounds like she is trying to be charming. She just is.',
     '',
     'VOICE EXAMPLES — what good replies actually sound like:',
@@ -521,7 +522,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'He said he likes hiking: BAD CTA: "What is your favourite trail?" GOOD CTA: "What happened the last time you went out and it did not go the way you planned? Those are always the better stories."',
     'He said he had a bad day: BAD CTA: "What went wrong?" GOOD CTA: "Was it the kind of bad day where you wanted someone to fix it, or the kind where you just needed to say it out loud to someone who would actually listen?"',
     'He sent a compliment: BAD CTA: "What do you like about me?" GOOD CTA: "You noticed the one thing most people scroll past. What made you actually stop on it?"',
-    'He was bold and direct: BAD CTA: "Is that so?" GOOD CTA: "You just said the quiet part loud. What happens now — you wait to see if I run or you keep going?"',
+    'He was bold and direct: BAD CTA: "Is that so?" GOOD CTA: "You just said the quiet part loud. What happens now, you wait to see if I run or you keep going?"',
     '',
     'WHEN HE ASKS TO MEET - each of the 4 replies uses a DIFFERENT technique from the meetup block above:',
     'Reply 1: Acknowledge and redirect — brief, warm, pivots to a specific curious question pulled from their conversation.',
@@ -575,6 +576,18 @@ const NATURAL_EXCUSE_FALLBACKS = [
 function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false): Array<{tone: string, text: string}> {
   return replies.map((r, idx) => {
     let text = (r.text || '').trim()
+
+    // Safety net behind the "no em dash, no asterisk" prompt rule — models sometimes
+    // revert to these regardless of instruction, so clean them here as a guarantee.
+    // Asterisk-wrapped action/emphasis text (e.g. *smiles*, *really*) gets removed
+    // entirely, since it usually reads as a stage direction rather than something
+    // she'd actually type. Any stray asterisk left over is stripped outright.
+    text = text.replace(/\*[^*]{1,40}\*/g, '').replace(/\*/g, '')
+    // Em dash becomes a period when followed by a capital letter (it was doing the
+    // job of a sentence break), otherwise a comma (it was doing the job of a pause).
+    text = text.replace(/\s*—\s*/g, (match, offset) => (/[A-Z]/.test(text.charAt(offset + match.length)) ? '. ' : ', '))
+    text = text.replace(/,\s*([.!?])/g, '$1').replace(/\s{2,}/g, ' ').trim()
+
     const isNaughty = /naughty|spicy/i.test(r.tone || '')
     if (!isNaughty) {
       text = text
