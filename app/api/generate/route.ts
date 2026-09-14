@@ -664,7 +664,20 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     }
 
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length >= 75)
+  }).filter(r => r.text.length >= 75 && !hasDroppedWordArtifact(r.text))
+}
+
+// Detects a specific, mechanical signature of a word having been silently dropped
+// mid-sentence — most commonly seen when a model self-censors a single explicit word
+// but still completes the surrounding sentence and punctuation. English never puts a
+// space directly before terminal punctuation, so "actually ?" or "hard ." is a
+// reliable tell regardless of topic. This is a pure grammar check, not a content
+// filter — it fires the same way on any topic. Deliberately does NOT flag "..." since
+// the prompt elsewhere calls for trailing-off ellipses as an intentional CTA device.
+function hasDroppedWordArtifact(text: string): boolean {
+  const spaceBeforePeriod = /\s\.(?!\.)/.test(text) // excludes " ..." (spaced ellipsis)
+  const spaceBeforeOther = /\s[?!,]/.test(text)
+  return spaceBeforePeriod || spaceBeforeOther || /,\s*,/.test(text)
 }
 
 export async function POST(req: Request) {
@@ -725,7 +738,33 @@ export async function POST(req: Request) {
       .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
       .trim()
     const replies = parseReplies(cleanedText)
-    const finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }], isMeetupContext)
+    let finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }], isMeetupContext)
+
+    // If the grammar-gap filter dropped one or more replies (dropped-word artifact,
+    // e.g. a model self-censoring an explicit word mid-sentence but still closing the
+    // punctuation), top the batch back up with one retry call rather than silently
+    // shipping a shrunk set. Capped at a single extra attempt so latency stays bounded —
+    // if the retry also comes up short, we ship whatever clean replies we have rather
+    // than looping or failing the request.
+    if (finalReplies.length < 4) {
+      try {
+        const retryRaw = await generate(prompt)
+        const retryClean = retryRaw
+          .replace(/<think>[\s\S]*?<\/think>/gi, '')
+          .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
+          .replace(/\[REASONING\][\s\S]*?\[\/REASONING\]/gi, '')
+          .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+          .trim()
+        const retryReplies = postProcess(parseReplies(retryClean), isMeetupContext)
+        const existingTexts = new Set(finalReplies.map(r => r.text))
+        for (const r of retryReplies) {
+          if (finalReplies.length >= 4) break
+          if (!existingTexts.has(r.text)) { finalReplies.push(r); existingTexts.add(r.text) }
+        }
+      } catch {
+        // Retry failed — proceed with whatever clean replies survived the first pass.
+      }
+    }
 
     return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: 'groq/gpt-oss-120b' }, { headers })
 
