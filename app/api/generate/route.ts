@@ -1,4 +1,4 @@
-// CIC generate route v11.2.0 - Updated models August 2026
+// CIC generate route v11.3.0 - Updated models August 2026
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
@@ -24,24 +24,77 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v11.2.0'
+    version: 'v11.3.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
-async function generate(prompt: string): Promise<string> {
+type GenResult = { text: string; model: string }
+
+// Provider chain. Optional Anthropic first (non-sexual messages only, needs ANTHROPIC_API_KEY),
+// then Groq (model order depends on message type), OpenRouter, Gemini.
+async function generate(
+  prompt: string,
+  opts: { sexual?: boolean; avoid?: string[] } = {}
+): Promise<GenResult> {
   const errors: string[] = []
+  const avoid = new Set(opts.avoid || [])
   const groqKey = process.env.GROQ_API_KEY
   const openrouterKey = process.env.OPENROUTER_API_KEY
   const googleKey = process.env.GOOGLE_AI_API_KEY
+  const anthropicKey = process.env.ANTHROPIC_API_KEY
+  const stripThink = (t: string) => t.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 
-  // ── Groq primary ─────────────────────────────────────────────────────────
-  if (groqKey) {
+  // ── Anthropic (optional) ─────────────────────────────────────────────────
+  if (anthropicKey && !opts.sexual && !avoid.has('anthropic')) {
+    try {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 20000)
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': anthropicKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-5-5',
+          max_tokens: 1200,
+          temperature: 0.9,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+        signal: ctrl.signal,
+      })
+      clearTimeout(timer)
+      const data = await res.json()
+      const text = data?.content?.[0]?.text
+      if (text) {
+        const clean = stripThink(text)
+        if (clean) { console.log('[CIC] Anthropic: claude-sonnet-5-5'); return { text: clean, model: 'anthropic/claude-sonnet-5-5' } }
+      }
+      errors.push(`Anthropic: ${JSON.stringify(data?.error || 'empty').substring(0, 80)}`)
+    } catch (e: any) {
+      errors.push(`Anthropic: ${e?.message?.substring(0, 60)}`)
+    }
+  }
+
+  // ── Groq ─────────────────────────────────────────────────────────────────
+  if (groqKey && !avoid.has('groq')) {
     const groq = createGroq({ apiKey: groqKey })
-    for (const model of [
-      'openai/gpt-oss-120b',                          // Best quality — Aug 2026
-      'openai/gpt-oss-20b',                           // Strong second
-      'meta-llama/llama-4-maverick-17b-128e-instruct', // Good quality, separate bucket
-    ]) {
+    // gpt-oss is the most safety-tuned of these and tends to refuse or silently drop
+    // explicit words, so it goes last for sexual messages and first for everything else.
+    const groqModels = opts.sexual
+      ? [
+          'llama-3.3-70b-versatile',
+          'meta-llama/llama-4-maverick-17b-128e-instruct',
+          'openai/gpt-oss-120b',
+        ]
+      : [
+          'openai/gpt-oss-120b',
+          'meta-llama/llama-4-maverick-17b-128e-instruct',
+          'llama-3.3-70b-versatile',
+          'openai/gpt-oss-20b',
+        ]
+    for (const model of groqModels) {
       try {
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 12000)
@@ -54,8 +107,8 @@ async function generate(prompt: string): Promise<string> {
         })
         clearTimeout(timeout)
         if (result.text) {
-          const clean = result.text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-          if (clean) { console.log('[CIC] Groq:', model); return clean }
+          const clean = stripThink(result.text)
+          if (clean) { console.log('[CIC] Groq:', model); return { text: clean, model: 'groq/' + model } }
         }
       } catch (e: any) {
         const s = e?.statusCode || e?.status || ''
@@ -72,11 +125,11 @@ async function generate(prompt: string): Promise<string> {
   }
 
   // ── OpenRouter fallback ───────────────────────────────────────────────────
-  if (openrouterKey) {
+  if (openrouterKey && !avoid.has('openrouter')) {
     const orModels = [
-      'google/gemma-3-27b-it',                      // Quality — 27B model
-      'mistralai/mistral-small-3.2-24b-instruct',   // Quality — 24B model
-      'microsoft/phi-4-reasoning-plus:free',         // Quality reasoning model
+      'google/gemma-3-27b-it',
+      'mistralai/mistral-small-3.2-24b-instruct',
+      'microsoft/phi-4-reasoning-plus:free',
     ]
     for (const orModel of orModels) {
       try {
@@ -103,8 +156,8 @@ async function generate(prompt: string): Promise<string> {
         const data = await res.json()
         const text = data?.choices?.[0]?.message?.content
         if (text) {
-          const cleanText = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
-          if (cleanText) { console.log('[CIC] OpenRouter:', orModel); return cleanText }
+          const cleanText = stripThink(text)
+          if (cleanText) { console.log('[CIC] OpenRouter:', orModel); return { text: cleanText, model: 'openrouter/' + orModel } }
         }
         const errCode = data?.error?.code || data?.error?.status || 0
         errors.push(`OpenRouter/${orModel}: ${JSON.stringify(data?.error || 'empty').substring(0, 60)}`)
@@ -116,8 +169,9 @@ async function generate(prompt: string): Promise<string> {
   }
 
   // ── Google Gemini fallback ────────────────────────────────────────────────
-  if (googleKey) {
-    for (const geminiModel of ['gemini-1.5-pro', 'gemini-1.5-flash']) {
+  // gemini-1.5 models are retired. Check Google AI Studio for the current model names.
+  if (googleKey && !avoid.has('gemini')) {
+    for (const geminiModel of ['gemini-2.5-pro', 'gemini-2.5-flash']) {
       try {
         const gemCtrl = new AbortController()
         const gemTimeout = setTimeout(() => gemCtrl.abort(), 15000)
@@ -133,7 +187,7 @@ async function generate(prompt: string): Promise<string> {
         clearTimeout(gemTimeout)
         const data = await res.json()
         const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
-        if (text) { console.log('[CIC] Gemini:', geminiModel); return text }
+        if (text) { console.log('[CIC] Gemini:', geminiModel); return { text: stripThink(text), model: 'gemini/' + geminiModel } }
         errors.push(`Gemini/${geminiModel}: ${JSON.stringify(data?.error || 'empty').substring(0, 60)}`)
       } catch (e: any) {
         errors.push(`Gemini/${geminiModel}: ${e?.message?.substring(0, 60)}`)
@@ -141,7 +195,6 @@ async function generate(prompt: string): Promise<string> {
     }
   }
 
-  // All providers exhausted — return a safe fallback so the app never crashes
   console.error('[CIC] All providers failed:', errors.join(' | '))
   throw new Error('All providers failed: ' + errors.join(' | '))
 }
@@ -173,6 +226,26 @@ function parseReplies(raw: string): Array<{tone: string, text: string}> {
   return []
 }
 
+// The extension sends history as "[3] HIM: text" and "[4] ME: text". Pull out only his lines.
+function getHisLines(context: string): string[] {
+  if (!context) return []
+  return (context.match(/(?:^|\n)\s*(?:\[\d+\]\s*)?(?:Him|He|Client)\s*:\s*(.+)/gi) || [])
+    .map(l => l.replace(/^\s*(?:\[\d+\]\s*)?(?:Him|He|Client)\s*:\s*/i, '').trim())
+    .filter(Boolean)
+}
+
+// Green-chat rule: she may only CONTINUE a sexual conversation, never start one.
+// "Sexual" is judged from HIS words only, in the current message or anywhere in the history.
+const EXPLICIT_RE = /\b(fuck|cock|pussy|ass\b|dick|cum\b|orgasm|moan|naked|nude|undress)\b/i
+const IMPLIED_RE = /\b(horny|turn.?on|lust|erotic|naughty|dirty talk|kinky|fantasize|touch me|in bed|sleep with|make love|bedroom)\b/i
+function isSexualText(t: string): boolean {
+  return EXPLICIT_RE.test(t) || IMPLIED_RE.test(t)
+}
+function heHasGoneSexual(context: string, message: string): boolean {
+  if (isSexualText(message)) return true
+  return getHisLines(context).some(isSexualText)
+}
+
 // Lightweight, zero-cost client-type inference from existing conversation context.
 // Runs on data we already have (context string) — no extra API call, no extra latency.
 // This only ever produces a soft tone-selection HINT — it never overrides the
@@ -182,9 +255,7 @@ function detectClientType(context: string, currentMessage: string): string | nul
 
   // Pull out just his lines from the conversation summary, if it's speaker-tagged.
   // Falls back to treating the whole context as signal if we can't isolate his turns.
-  const hisLines = (context.match(/(?:^|\n)\s*(?:Him|He|Client)\s*:\s*(.+)/gi) || [])
-    .map(l => l.replace(/(?:^|\n)\s*(?:Him|He|Client)\s*:\s*/i, '').trim())
-    .filter(Boolean)
+  const hisLines = getHisLines(context)
 
   const sample = hisLines.length >= 2 ? hisLines : [currentMessage]
   const avgLen = sample.reduce((sum, l) => sum + l.length, 0) / sample.length
@@ -205,6 +276,174 @@ const CLIENT_TYPE_HINTS: Record<string, string> = {
   silent: 'He tends to write short, guarded replies — favor a light tease or gentle curiosity that re-engages without pressure, over long warm paragraphs he is unlikely to match.',
 }
 
+// ═══ LOCAL CONTEXT (US cities) ═══════════════════════════════════════════════
+// When he mentions a US city, pull light local material: weather and time of day, local headlines,
+// and sports headlines if he follows a sport. Free sources with no API keys: Open-Meteo (geocoding
+// and weather) and Google News RSS. Every call is time-capped and fails silently, so this can never
+// block or break a reply.
+const STATE_NAMES: Record<string, string> = {
+  AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',CT:'Connecticut',DE:'Delaware',DC:'District of Columbia',
+  FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',
+  MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',
+  NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',
+  PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',VA:'Virginia',
+  WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',
+}
+
+// Words that follow "in/from/near" but are not places, and words that end a place name.
+const CITY_STOP = new Set(['the','a','an','my','your','our','their','his','her','this','that','these','those','it','me','you','us','bed','love','case','fact','general','person','public','private','charge','control','touch','town','school','work','college','real','life','mood','time','between','front','back','car','home','house','here','there','no','one','some','any','every','all','just','about','around','like','such','more','most','how','what','when','where','why','which','who','good','bad','trouble','need','person','style','way','order','shape','mind','heaven','hell','love'])
+const CITY_CUT = new Set(['and','but','with','for','right','now','today','tonight','rn','so','on','at','where','when','because','though','since','while','until','this','that','which','who','too','also','as','if','or','is','was','are','am','it','its','lol','haha','anyway','currently','still','again','then','area','state','county','city'])
+
+function extractCityCandidates(lines: string[]): Array<{ name: string; state?: string }> {
+  const out: Array<{ name: string; state?: string }> = []
+  const seen = new Set<string>()
+  const re = /\b(?:live in|living in|lives in|from|based in|moved to|moving to|visiting|outside of|outside|near|in)\s+([A-Za-z][A-Za-z.'-]+(?:\s+[A-Za-z][A-Za-z.'-]+){0,3})(?:\s*,\s*([A-Za-z]{2})\b)?/gi
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const matches = Array.from(lines[i].matchAll(re)).reverse()
+    for (const m of matches) {
+      let words = m[1].split(/\s+/)
+      const cutIdx = words.findIndex(w => CITY_CUT.has(w.toLowerCase().replace(/[.'-]/g, '')))
+      if (cutIdx === 0) continue
+      if (cutIdx > 0) words = words.slice(0, cutIdx)
+      if (!words.length || CITY_STOP.has(words[0].toLowerCase())) continue
+      const st = m[2] && STATE_NAMES[m[2].toUpperCase()] ? m[2].toUpperCase() : undefined
+      for (let n = words.length; n >= 1; n--) {
+        const name = words.slice(0, n).join(' ').replace(/[.,]+$/, '')
+        if (name.length < 3) continue
+        const key = name.toLowerCase() + '|' + (st || '')
+        if (!seen.has(key)) { seen.add(key); out.push({ name, state: st }) }
+      }
+    }
+  }
+  return out.slice(0, 6)
+}
+
+async function fetchTimed(url: string, ms = 2500): Promise<Response | null> {
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), ms)
+    const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CIC/1.0)' } })
+    clearTimeout(t)
+    return res.ok ? res : null
+  } catch { return null }
+}
+
+type GeoHit = { name: string; admin1: string; lat: number; lon: number }
+const geoCache = new Map<string, GeoHit | null>()
+async function geocodeUS(c: { name: string; state?: string }): Promise<GeoHit | null> {
+  const key = c.name.toLowerCase() + '|' + (c.state || '')
+  if (geoCache.has(key)) return geoCache.get(key)!
+  const res = await fetchTimed(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(c.name)}&count=8&language=en&format=json&countryCode=US`)
+  if (!res) return null // network failure: do not cache
+  const data: any = await res.json().catch(() => null)
+  const list: any[] = (data?.results || []).filter((r: any) => r.country_code === 'US')
+  const wantState = c.state ? STATE_NAMES[c.state] : undefined
+  const pick = (wantState ? list.find(r => r.admin1 === wantState) : undefined) || list.find(r => (r.population || 0) >= 50000)
+  const hit: GeoHit | null = pick ? { name: pick.name, admin1: pick.admin1, lat: pick.latitude, lon: pick.longitude } : null
+  geoCache.set(key, hit)
+  return hit
+}
+
+function wxDesc(code: number): string {
+  if (code === 0) return 'clear'
+  if (code <= 3) return code === 1 ? 'mostly clear' : code === 2 ? 'partly cloudy' : 'overcast'
+  if (code === 45 || code === 48) return 'foggy'
+  if (code >= 51 && code <= 57) return 'drizzly'
+  if (code >= 61 && code <= 67) return 'rainy'
+  if (code >= 71 && code <= 77) return 'snowing'
+  if (code >= 80 && code <= 82) return 'showery'
+  if (code === 85 || code === 86) return 'snow showers'
+  if (code >= 95) return 'stormy'
+  return 'unsettled'
+}
+
+async function fetchWeather(lat: number, lon: number): Promise<string> {
+  const res = await fetchTimed(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto&forecast_days=1`)
+  if (!res) return ''
+  const data: any = await res.json().catch(() => null)
+  const cur = data?.current
+  if (!cur || typeof cur.temperature_2m !== 'number') return ''
+  const hour = parseInt(String(cur.time || '').slice(11, 13), 10)
+  const part = isNaN(hour) ? '' : hour < 5 ? 'late night' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night'
+  const hi = data?.daily?.temperature_2m_max?.[0]
+  const lo = data?.daily?.temperature_2m_min?.[0]
+  let out = (part ? `It is ${part} there. ` : '') + `${Math.round(cur.temperature_2m)}F and ${wxDesc(cur.weather_code)} right now`
+  if (typeof hi === 'number' && typeof lo === 'number') out += `, today's high ${Math.round(hi)}F and low ${Math.round(lo)}F`
+  return out + '.'
+}
+
+// Skip anything heavy: politics, crime, accidents, tragedy. Light local material only.
+const HEADLINE_BAD = /(shoot|shot\b|gun|kill|dead|death|dies|died|murder|crash|fatal|arrest|police|stabb|victim|assault|abuse|robber|theft|stolen|crime|overdose|dui\b|trump|biden|election|congress|senate|democrat|republican|politic|vote|court|trial|war\b|attack|fire\b|missing|lawsuit|suspect|charged|injur|hospital|drown|bomb|threat|scandal|protest|immigra)/i
+function decodeEntities(t: string): string {
+  return t.replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+}
+async function fetchHeadlines(query: string, max = 3): Promise<string[]> {
+  const res = await fetchTimed(`https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`)
+  if (!res) return []
+  const xml = await res.text().catch(() => '')
+  const titles = Array.from(xml.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>/g))
+    .map(m => decodeEntities(m[1]).replace(/\s+-\s+[^-]+$/, '').trim())
+  return titles.filter(t => t.length > 12 && !HEADLINE_BAD.test(t)).slice(0, max)
+}
+
+const SPORT_WORDS: Array<[RegExp, string]> = [
+  [/\b(college football|college basketball|march madness)\b/i, 'college sports'],
+  [/\b(nfl|football|touchdown|quarterback)\b/i, 'NFL football'],
+  [/\b(nba|basketball|hoops)\b/i, 'NBA basketball'],
+  [/\b(mlb|baseball)\b/i, 'MLB baseball'],
+  [/\b(nhl|hockey)\b/i, 'NHL hockey'],
+  [/\b(mls|soccer)\b/i, 'MLS soccer'],
+  [/\b(golf|pga)\b/i, 'golf'],
+  [/\bnascar\b/i, 'NASCAR'],
+  [/\b(ufc|mma)\b/i, 'UFC'],
+]
+const localCache = new Map<string, { at: number; text: string }>()
+
+async function getLocalContext(context: string, message: string): Promise<string> {
+  const lines = [...getHisLines(context), message].filter(Boolean)
+  const cands = extractCityCandidates(lines)
+  if (!cands.length) return ''
+
+  const work = (async (): Promise<string> => {
+    let place: GeoHit | null = null
+    for (const c of cands.slice(0, 4)) { place = await geocodeUS(c); if (place) break }
+    if (!place) return ''
+    const label = `${place.name}, ${place.admin1}`
+
+    const hisText = lines.join(' ')
+    const sport = (SPORT_WORDS.find(([re]) => re.test(hisText)) || [])[1]
+    const weatherTalk = /\b(weather|rain|raining|snow|snowing|cold|freezing|hot|humid|heat|storm|hurricane|tornado|sunny|windy|forecast)\b/i.test(lines.slice(-3).join(' '))
+
+    const ck = `${label}|${sport || ''}|${weatherTalk ? 'w' : ''}`.toLowerCase()
+    const cached = localCache.get(ck)
+    if (cached && Date.now() - cached.at < 15 * 60 * 1000) return cached.text
+
+    const [wx, news, sports] = await Promise.all([
+      fetchWeather(place.lat, place.lon),
+      fetchHeadlines(`${place.name} ${place.admin1} local news`),
+      sport ? fetchHeadlines(`${place.name} ${sport}`) : Promise.resolve([] as string[]),
+    ])
+    if (!wx && !news.length && !sports.length) return ''
+
+    const parts: string[] = [`LOCAL CONTEXT - he mentioned ${label}. This is OPTIONAL background, never a script:`]
+    if (wx) parts.push(`- Weather and time there: ${wx}${weatherTalk ? ' (he has been talking about the weather, so this is a natural hook)' : ''}`)
+    if (news.length) parts.push('- Local headlines: ' + news.map(h => `"${h}"`).join(' | '))
+    if (sports.length) parts.push(`- Sports he follows (${sport}): ` + sports.map(h => `"${h}"`).join(' | '))
+    parts.push(
+      'RULES FOR THIS: Use at most ONE item, and only if it connects to what he just said or gives her question a natural hook. Never list several. ' +
+      'She can say she saw or heard it, but she never invents details beyond what is listed here. ' +
+      'She never claims to be in his city or to be having the same weather. No politics, crime, accidents or tragedy even if one slipped through. ' +
+      'If nothing here fits his message naturally, she ignores this section completely.'
+    )
+    const text = '\n' + parts.join('\n') + '\n'
+    localCache.set(ck, { at: Date.now(), text })
+    return text
+  })()
+
+  // Hard cap so lookups can never slow a reply by more than a few seconds.
+  return Promise.race([work, new Promise<string>(r => setTimeout(() => r(''), 4000))]).catch(() => '')
+}
+
 function buildPrompt(
   message: string,
   context: string,
@@ -213,7 +452,8 @@ function buildPrompt(
   englishVariety: string,
   myName: string | null,
   questionsToAnswer: string[] = [],
-  clientType: string | null = null
+  clientType: string | null = null,
+  localContext: string = ''
 ): string {
   const eng: Record<string, string> = {
     AmEng: 'American English. Spelling: color, favorite, realize. Idioms: awesome, sure thing, totally.',
@@ -232,9 +472,9 @@ function buildPrompt(
   const isContact = /\b(phone|number|whatsapp|instagram|snap|telegram|signal|email|contact|off (here|this|platform)|call me|give me your|text me|hear your voice|real phone|facetime|video call|voice call|move off|take this off|talk on the phone|talk properly|talk for real)\b/i.test(message)
   const isGrief = /\b(passed away|died|death|widow|widower|lost (my|his|her|a)|grief|grieving|funeral|missing (him|her|them)|alone since|live alone)\b/i.test(message)
   const isVulnerable = !isGrief && /\b(lonely|alone|scared|afraid|hurt|broken|struggling|hard time|pain|don.?t know|confused|overwhelmed)\b/i.test(message)
-  const isExplicit = /\b(fuck|cock|pussy|ass\b|dick|cum\b|orgasm|moan|naked|nude|undress)\b/i.test(message)
-  const isImplied = /\b(horny|wet\b|hard\b|turn.?on|desire|lust|erotic|naughty|dirty|kinky|fantasize|pleasure|touch me|in bed|sleep with|make love|intimate|bedroom|hot for|want you|need you)\b/i.test(message)
-  const isErotic = isExplicit || isImplied
+  const isErotic = isSexualText(message)
+  const heWentSexualEarlier = !isErotic && getHisLines(context).some(isSexualText)
+  const sexualAllowed = isErotic || heWentSexualEarlier
 
   const photoBlock = !isPhoto ? '' : `
 PHOTO MESSAGE:
@@ -343,7 +583,7 @@ She makes him feel that earning her number is something worth doing.
   const eroticBlock = !isErotic ? '' : `
 HE IS BEING SEXUAL OR EROTIC - PRIMARY RULE FOR THIS MESSAGE:
 She is an adult woman who owns her desire. Not shocked. Not coy. Not pulling back.
-She reads exactly what he said and goes one level higher. Always higher. Never equal. Never back.
+She reads exactly what he said and matches his heat, going at most a half-step further, and only on what HE brought up. She never introduces a new act, body part, or scenario he has not mentioned first.
 Real adult language. Not heating up or chemistry or metaphors that avoid naming the thing.
 She states what she is thinking, imagining, wanting. She does not hint. Ends with one thing left unfinished.
 
@@ -357,6 +597,36 @@ She does not water down his language. If he says pussy she can say pussy. If he 
 She does not replace explicit words with vague ones. She matches his vocabulary exactly.
 The erotic CTA must name something specific from what he said - his exact act, his exact words, his exact desire.
 `
+
+  const curiosityIdeas = `Curiosity questions she can use (in fresh, creative wording every time, never the same phrasing twice): pace and style (slow burn or all at once), control or being surprised, lights on or off, whispers or nails down the back, where his hands go first, a spot he loves kissed or touched, whether he has tried roleplay, what mentally turns him on as much as physically, a wild experience he still thinks about, what makes it unforgettable for him.`
+
+  const continueBlock = !heWentSexualEarlier ? '' : `
+HE STEERED THIS CHAT SEXUAL EARLIER - SHE MAY CONTINUE, NEVER LEAD:
+Sexual talk is allowed here because HE started it. She does not need to redirect and does not need to force it either. She follows his lead naturally, stays on topics he has raised, and never introduces a new sexual act or scenario of her own.
+${curiosityIdeas}
+`
+
+  const noSexualBlock = sexualAllowed ? '' : `
+GREEN CHAT RULE - NEVER START, ONLY CONTINUE:
+He has not brought up anything sexual in this conversation. She must NOT introduce sexual topics, innuendo, body references or sexual questions. Her flirting stays romantic, teasing and emotional: chemistry, curiosity, attraction to who he is. If he raises it himself later she may follow his lead, but she never goes first.
+`
+
+  const platformBlock = `PLATFORM QUALITY STANDARDS (operators are reviewed daily on these):
+1. Every reply ends with ONE strong call to action: a single question he cannot answer in one word. One strong question beats several small ones.
+2. She answers every question he asked, personally and specifically.
+3. Every reply carries one sincere, specific compliment about something he actually said or shared. Not looks clichés.
+4. She never repeats a question, angle or compliment already used earlier in the history.
+5. If he mentions a specific reference (a show, place, slang, event) she responds to it knowingly. If she would not recognise it, she responds to the feeling behind it and asks him about it. She never fakes knowledge.
+6. Be exciting and specific. Anything that could be sent to any man is a failure.`
+
+  const humanBlock = `SOUNDING UNMISTAKABLY HUMAN - THE TEST EVERY REPLY MUST PASS:
+Imagine a stranger reading it beside 50 AI replies. If it could be one of them, rewrite it.
+- The 4 replies must differ in length, rhythm and structure. One can be two short sentences, another can run three. Never open two replies with the same word or shape. Never give all four the same "observation, then question" template.
+- She writes like a woman actually texting: contractions, a fragment now and then, a thought that trails, a small opinion stated flatly. Nothing polished to death.
+- Concrete beats abstract. A tiny believable detail (an object, a place, a habit, a half-memory) is worth more than any adjective.
+- One idea per reply, then the single question. No wrap-up line that neatly explains her own feelings.
+- Banned AI tells: "I can't help but", "genuinely" or "honestly" more than once across the whole set, "it's not X, it's Y" constructions, three adjectives in a row, "that says a lot about you", "I'm still thinking about", "most people would have", "most guys", "there's something about", "you have a way of", "I love how", "that's rare", and stacked rhetorical questions.
+- Compliments are specific to something he said. Never "handsome", "cute", "sweet" or "amazing" standing alone.`
 
   const hasQuestions = questionsToAnswer.length > 0
   const multiQ = hasQuestions
@@ -394,7 +664,10 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'LANGUAGE: ' + engNote,
     nameNote,
     '',
+    platformBlock,
+    '',
     historyNote,
+    localContext,
     multiQ,
     photoBlock,
     griefBlock,
@@ -402,6 +675,8 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     meetupBlock,
     contactBlock,
     eroticBlock,
+    continueBlock,
+    noSexualBlock,
     '',
     'HIS MESSAGE: "' + message + '"',
     '',
@@ -426,13 +701,13 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'No asterisks, ever. She never writes *smiles*, *winks*, *laughs*, or any action/emphasis wrapped in asterisks. She never uses asterisks for emphasis on a word either. If she wants to show an action or emotion, she says it in plain words as part of the sentence.',
     'She never sounds like she is trying to be charming. She just is.',
     '',
-    'VOICE EXAMPLES — what good replies actually sound like:',
+    'VOICE EXAMPLES — illustrations of quality only. NEVER reuse their wording, phrases or sentence shapes:',
     'BAD: "You seem really interesting, I would love to know more about you." — performing.',
-    'GOOD: "You just described something that most people would have edited out. That is the part I actually want to talk about." — real.',
+    'GOOD: "Wait, night shifts and you still cook? Okay, I need to know what you make at 3am." — reacts to one real detail, a little funny, one concrete question.',
     'BAD: "I like a man who knows what he wants." — cliché, heard before.',
-    'GOOD: "You said that like it was obvious. It was not obvious. Most people would have hedged it." — specific and earned.',
+    'GOOD: "You said that so plainly I almost missed how bold it was. Do you always skip the warm-up or only when you like someone?" — specific and earned.',
     'BAD: "I feel like we have a connection." — hollow and fast.',
-    'GOOD: "I was not expecting to still be thinking about something you said an hour later. Here we are." — shows she was genuinely affected.',
+    'GOOD: "Not gonna lie, I read that twice. Which version of that story do you tell people at parties?" — shows she was affected without announcing it.',
     'The difference: bad replies are about performing interest. Good replies show interest by demonstrating she actually listened.',
     '',
     'HOW SHE IS FUNNY - SPECIFIC MECHANICS:',
@@ -457,13 +732,15 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'When he is being vulnerable - meet him there, not with a punchline.',
     'Humour is never used to avoid real moments. It is used to create them.',
     '',
+    humanBlock,
+    '',
     'SPECIFICITY — THE DIFFERENCE BETWEEN GENERIC AND IRRESISTIBLE:',
     'Generic: "You seem like someone who knows exactly what they want." — could be sent to anyone.',
-    'Specific: "The fact that you led with that instead of something safer tells me more than you probably meant to." — can only be sent to him.',
+    'Specific: "You led with the boat and not the job. I have questions about the boat." — can only be sent to him.',
     'Generic: "I like the way you think." — hollow.',
-    'Specific: "Most people would have said the obvious thing there. You did not. That is the part I am still thinking about." — earned.',
+    'Specific: "A grown man who admits he cried at that film. Okay, now I want the whole story." — earned.',
     'Generic: "You are different from most guys I talk to." — he has heard this before.',
-    'Specific: "You just said the one thing that was actually true in a situation where most people perform." — he believes this.',
+    'Specific: "Sunday roast with your whole family every week? That is either lovely or exhausting, which is it?" — he believes this.',
     'The test: could this reply be copy-pasted to a different man? If yes — rewrite it.',
     'Every reply must contain at least one detail that could ONLY have come from reading HIS exact message.',
     '',
@@ -510,7 +787,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '2. THE SPECIFIC CHALLENGE: Call out something precise in what he said - a claim, an assumption - and make him defend or explain it.',
     '3. THE MIRROR: Reflect his exact energy back with a question that shows she read what he was really saying underneath the words.',
     '4. THE REVEAL AND ASK: She tells him something small, specific, and surprising about herself that connects to what he said - then asks his version.',
-    '5. THE ESCALATION: For erotic/flirty exchanges - she takes exactly what he said and pushes it one step further, leaving the next move to him.',
+    '5. THE ESCALATION: Only when HE has already made the chat sexual - she follows his lead one step further and leaves the next move to him. Never in any other chat.',
     '6. THE VULNERABLE PULL: For emotional moments - she names the feeling underneath, acknowledges it, then asks the question that shows she actually wants to understand him.',
     '',
     'TEST FOR A GOOD CTA: Could he answer with just yes, no, or fine? If yes - it is too weak. Rewrite it.',
@@ -545,7 +822,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'A reply that is only a question with no substance before it is too weak. Lead with something real, then ask.',
     '',
     'ORDER: Most irresistible and human reply first.',
-    'TONES - pick 4 from: Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy, Naughty',
+    'TONES - pick 4 from: ' + (sexualAllowed ? 'Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy, Naughty' : 'Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable (NEVER Spicy or Naughty in this chat)'),
     clientType && CLIENT_TYPE_HINTS[clientType]
       ? 'TONE BIAS (soft preference only - grief/vulnerable/erotic/meetup/contact rules above always take priority over this): ' + CLIENT_TYPE_HINTS[clientType]
       : '',
@@ -559,22 +836,8 @@ function isCompleteSentence(text: string): boolean {
   return /[.?!]["']?\s*$/.test(text.trim())
 }
 
-// Natural, situational excuses used when a reply slips into promising a meetup or
-// contact details. These are deliberately NOT policy statements ("I don't rush into
-// things") — a stated personal rule reads as a soft rejection with a justification
-// attached. A real excuse is external and temporary: something in her life is in the
-// way right now, not something about her character or her rules. That leaves the door
-// open rather than closing one. Rotates across the 4 replies in a batch so a caught
-// promise doesn't produce 4 identical fallback lines.
-const NATURAL_EXCUSE_FALLBACKS = [
-  "Okay, that got a real smile out of me, not going to pretend otherwise. Things on my end are a bit chaotic right now so I cannot lock anything in, but I do not want this to fade out either. What is something about you nobody would guess just by looking at you?",
-  "I will be honest, part of me really likes that idea. My schedule has been all over the place lately so I cannot commit to anything solid just yet, but I am nowhere near ready to let this conversation go. What is the one thing you always order and never get tired of?",
-  "You just made me grin at my phone, I am not even going to hide it. It is genuinely not the easiest moment for me to plan around, work has had me a little scattered. Tell me something that made you laugh out loud recently.",
-  "I love that you asked, truly. Things are a little unpredictable on my end right now so I cannot promise anything concrete, but I really do not want this energy to disappear. What is a small thing that always puts you in a good mood?",
-]
-
 function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false): Array<{tone: string, text: string}> {
-  return replies.map((r, idx) => {
+  return replies.map((r) => {
     let text = (r.text || '').trim()
 
     // Safety net behind the "no em dash, no asterisk" prompt rule — models sometimes
@@ -610,9 +873,8 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // in the conversation (e.g. "I'd love to hear more") are not falsely flagged.
     const softPromise = isMeetupContext && /\b(soon|someday|one day|next time|another time|when i'?m free|when i am free|let'?s plan|we'?ll plan|i'?d love to (meet|see you)|i would love to (meet|see you)|count me in|i'?m in|let'?s do it|when the time is right|when things settle|i promise|when i know you better)\b/i.test(text)
 
-    if (madePromise || softPromise) {
-      text = NATURAL_EXCUSE_FALLBACKS[idx % NATURAL_EXCUSE_FALLBACKS.length]
-    }
+    // A reply that promises a meetup or contact details is dropped, not swapped for canned text.
+    if (madePromise || softPromise) return { tone: r.tone || 'Reply', text: '' }
 
     text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's)[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
@@ -629,42 +891,11 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
       else return { tone: r.tone || 'Reply', text: '' }
     }
 
-    // Enforce 75 character minimum — pad with contextual substance, never generic filler
-    if (text.length < 75) {
-      const endsWithQ = text.endsWith('?')
-      const pads = endsWithQ ? [
-        ' The fact that you said it that way rather than the obvious way is the part I am still thinking about.',
-        ' Most people would have left it at the surface. You did not, and that changes things.',
-        ' I did not expect to still be sitting with that, but here I am.',
-        ' There is a version of that answer most people give. You gave the other one.',
-      ] : [
-        ' Most people would have said something safer there. The fact that you did not says something.',
-        ' I keep coming back to that and I cannot decide if you meant it the way I heard it.',
-        ' That is the kind of thing that stays with you longer than it should.',
-        ' There is more in that than you probably meant to give away.',
-      ]
-      for (const pad of pads) {
-        let padded: string
-        if (endsWithQ) {
-          const lastSent = Math.max(text.lastIndexOf('. '), text.lastIndexOf('! '))
-          if (lastSent > 10) {
-            padded = text.substring(0, lastSent + 1) + pad + ' ' + text.substring(lastSent + 2)
-          } else {
-            padded = text.slice(0, -1) + '.' + pad + '?'
-          }
-        } else {
-          padded = text + pad
-        }
-        if (padded.length >= 75 && padded.length <= 260) {
-          text = padded
-          if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
-          break
-        }
-      }
-    }
+    // 75 character minimum is enforced by the filter below. Short replies are dropped
+    // (and topped up by the retry in POST) instead of padded with identical stock sentences.
 
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length >= 75 && !hasDroppedWordArtifact(r.text))
+  }).filter(r => r.text.length >= 75 && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
 }
 
 // Detects a specific, mechanical signature of a word having been silently dropped
@@ -713,7 +944,7 @@ export async function POST(req: Request) {
         '3. Warm gentle callback',
         'Return ONLY valid JSON: {"analysis":"why he went quiet","triggers":[{"label":"l","text":"t"},{"label":"l","text":"t"},{"label":"l","text":"t"}]}',
       ].join('\n')
-      const raw = await generate(rp)
+      const raw = (await generate(rp)).text
       try {
         const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
         const parsed = JSON.parse(clean)
@@ -727,35 +958,31 @@ export async function POST(req: Request) {
     // Same detection buildPrompt uses internally — computed here too so postProcess
     // knows whether to apply the stricter soft-promise check.
     const isMeetupContext = /\b(meet(\s*up)?|come over|your place|my place|hotel|in person|see you|tonight|come round)\b/i.test(message)
-    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType)
-    const rawText = await generate(prompt)
-    // Strip thinking blocks before parsing — some models output <think>...</think>
-    // Nuclear strip — catches think blocks from ANY model regardless of source
-    const cleanedText = rawText
+    // Sexual chats route to the Groq chain that is less likely to refuse. Everything else uses the quality chain.
+    const sexualRoute = heHasGoneSexual(context, message)
+    let localContext = ''
+    try { localContext = await getLocalContext(context, message) } catch { /* local context is optional */ }
+    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext)
+    const cleanLLM = (t: string) => t
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
       .replace(/\[REASONING\][\s\S]*?\[\/REASONING\]/gi, '')
       .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
       .trim()
-    const replies = parseReplies(cleanedText)
-    let finalReplies = postProcess(replies.length >= 1 ? replies : [{ tone: 'Casual', text: rawText.substring(0, 200) }], isMeetupContext)
 
-    // If the grammar-gap filter dropped one or more replies (dropped-word artifact,
-    // e.g. a model self-censoring an explicit word mid-sentence but still closing the
-    // punctuation), top the batch back up with one retry call rather than silently
-    // shipping a shrunk set. Capped at a single extra attempt so latency stays bounded —
-    // if the retry also comes up short, we ship whatever clean replies we have rather
-    // than looping or failing the request.
+    const first = await generate(prompt, { sexual: sexualRoute })
+    // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
+    let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext)
+
+    // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
+    // with ONE retry. If the first provider was Anthropic, the retry skips it.
     if (finalReplies.length < 4) {
       try {
-        const retryRaw = await generate(prompt)
-        const retryClean = retryRaw
-          .replace(/<think>[\s\S]*?<\/think>/gi, '')
-          .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
-          .replace(/\[REASONING\][\s\S]*?\[\/REASONING\]/gi, '')
-          .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
-          .trim()
-        const retryReplies = postProcess(parseReplies(retryClean), isMeetupContext)
+        const retry = await generate(prompt, {
+          sexual: sexualRoute,
+          avoid: first.model.startsWith('anthropic') ? ['anthropic'] : [],
+        })
+        const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext)
         const existingTexts = new Set(finalReplies.map(r => r.text))
         for (const r of retryReplies) {
           if (finalReplies.length >= 4) break
@@ -766,7 +993,11 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: 'groq/gpt-oss-120b' }, { headers })
+    if (!finalReplies.length) {
+      return NextResponse.json({ error: 'Could not produce a clean set of replies. Tap Generate again.', replies: [], remaining: 999 }, { status: 200, headers })
+    }
+
+    return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: first.model }, { headers })
 
   } catch (error: any) {
     const errMsg = error?.message || 'Generation failed'
