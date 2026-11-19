@@ -1,4 +1,4 @@
-// CIC generate route v11.3.0 - Updated models August 2026
+// CIC generate route v11.4.0 - Updated models August 2026
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
@@ -24,7 +24,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v11.3.0'
+    version: 'v11.4.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -199,16 +199,28 @@ async function generate(
   throw new Error('All providers failed: ' + errors.join(' | '))
 }
 
+// Replies now arrive as {tone, body, question}. They are joined here so the closing question is
+// always the last thing in the text. The old {tone, text} shape is still accepted.
+function normalizeReply(r: any): { tone: string; text: string } {
+  const tone = ((r && r.tone) || 'Reply').toString()
+  if (r && typeof r.text === 'string' && r.text.trim()) return { tone, text: r.text }
+  const body = ((r && r.body) || '').toString().trim()
+  const q = ((r && (r.question || r.cta)) || '').toString().trim()
+  if (!body && !q) return { tone, text: '' }
+  const lead = body && !/[.!?…"']$/.test(body) ? body + '.' : body
+  return { tone, text: [lead, q].filter(Boolean).join(' ') }
+}
+
 function parseReplies(raw: string): Array<{tone: string, text: string}> {
   if (!raw) return []
   // Strip chain-of-thought thinking blocks (Qwen, DeepSeek, o1-style models)
   let clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
   clean = clean.replace(/^```(?:json)?\s*/im, '').replace(/```\s*$/im, '').trim()
 
-  try { const p = JSON.parse(clean); if (Array.isArray(p.replies) && p.replies.length) return p.replies } catch {}
+  try { const p = JSON.parse(clean); if (Array.isArray(p.replies) && p.replies.length) return p.replies.map(normalizeReply) } catch {}
 
   const m = clean.match(/\{[\s\S]*?"replies"\s*:\s*\[[\s\S]*?\]\s*\}/)
-  if (m) { try { const p = JSON.parse(m[0]); if (Array.isArray(p.replies)) return p.replies } catch {} }
+  if (m) { try { const p = JSON.parse(m[0]); if (Array.isArray(p.replies)) return p.replies.map(normalizeReply) } catch {} }
 
   const replies: Array<{tone: string, text: string}> = []
   const replyPattern = /\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^\\"]|\\.)*)"\s*\}/g
@@ -223,7 +235,16 @@ function parseReplies(raw: string): Array<{tone: string, text: string}> {
   }
   if (replies.length > 0) return replies
 
-  return []
+  // Last resort for truncated or malformed JSON: pull {tone, body, question} objects one by one.
+  const bqPattern = /\{\s*"tone"\s*:\s*"([^"]+)"\s*,\s*"body"\s*:\s*"((?:[^\\"]|\\.)*)"\s*,\s*"question"\s*:\s*"((?:[^\\"]|\\.)*)"\s*\}/g
+  let bq
+  while ((bq = bqPattern.exec(clean)) !== null) {
+    try {
+      const n = normalizeReply({ tone: bq[1], body: JSON.parse('"' + bq[2] + '"'), question: JSON.parse('"' + bq[3] + '"') })
+      if (n.text.length > 5) replies.push(n)
+    } catch { /* skip malformed object */ }
+  }
+  return replies
 }
 
 // The extension sends history as "[3] HIM: text" and "[4] ME: text". Pull out only his lines.
@@ -274,6 +295,42 @@ const CLIENT_TYPE_HINTS: Record<string, string> = {
   talker: 'He tends to write long, story-driven messages — lean into playful curiosity and follow-up hooks that invite him to keep telling his story, over drier or more clipped tones.',
   naughty: 'He tends to get straight to the point with direct, forward messages — matching directness while holding a little back (push-pull) tends to land better than fully warm/soft tones here.',
   silent: 'He tends to write short, guarded replies — favor a light tease or gentle curiosity that re-engages without pressure, over long warm paragraphs he is unlikely to match.',
+}
+
+// ═══ MATCH HIS ENERGY: length tiers ═════════════════════════════════════════════
+// The 75 character floor stays. Short messages get short replies, long messages get fuller ones.
+type LengthTier = { name: string; min: number; max: number; note: string }
+const LENGTH_TIERS: Record<string, LengthTier> = {
+  short: { name: 'short', min: 75, max: 130, note: 'He wrote very little. She matches it: one short, punchy sentence of reaction and then the question. Quick and light, no paragraph. She never out-writes him.' },
+  medium: { name: 'medium', min: 80, max: 190, note: 'He wrote a normal-length message. She replies in two or three sentences of reaction, then the question.' },
+  long: { name: 'long', min: 110, max: 260, note: 'He wrote a lot, so she gives it real attention: three or four sentences that pick up specific details he shared, then the question.' },
+  sensitive: { name: 'sensitive', min: 100, max: 260, note: 'This is an important moment in the chat, so she takes the room she needs to handle it well, and still finishes with the one closing question.' },
+}
+
+function getLengthTier(message: string): LengthTier {
+  if (/\b(meet(\s*up)?|come over|your place|my place|hotel|in person|see you|come round)\b/i.test(message)) return LENGTH_TIERS.sensitive
+  if (/\b(phone|whatsapp|instagram|snap|telegram|call me|give me your|text me|hear your voice|facetime|video call|voice call|move off|take this off)\b/i.test(message)) return LENGTH_TIERS.sensitive
+  if (/\b(passed away|died|death|widow|widower|funeral|grief|grieving|lost (my|his|her|a))\b/i.test(message)) return LENGTH_TIERS.sensitive
+  if (/SENT A PHOTO|SHARED A PHOTO|\[photo\]/i.test(message)) return LENGTH_TIERS.medium
+  const clean = message.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim()
+  const words = clean ? clean.split(' ').length : 0
+  if (words <= 6 || clean.length < 35) return LENGTH_TIERS.short
+  if (words <= 20 && clean.length <= 140) return LENGTH_TIERS.medium
+  return LENGTH_TIERS.long
+}
+
+function endsWithQuestion(t: string): boolean {
+  return /\?["')\]]?\s*$/.test(t.trim())
+}
+
+// Splits "lead + closing question" so trimming can shorten the lead and never the question.
+function splitClosing(text: string): { lead: string; closing: string } | null {
+  const t = text.trim()
+  if (!/\?["')\]]?$/.test(t)) return null
+  const body = t.replace(/\?["')\]]?$/, '')
+  const m = body.match(/^[\s\S]*[.!?]["')\]]?\s+/)
+  const idx = m ? m[0].length : 0
+  return { lead: t.slice(0, idx).trim(), closing: t.slice(idx).trim() }
 }
 
 // ═══ LOCAL CONTEXT (US cities) ═══════════════════════════════════════════════
@@ -453,7 +510,8 @@ function buildPrompt(
   myName: string | null,
   questionsToAnswer: string[] = [],
   clientType: string | null = null,
-  localContext: string = ''
+  localContext: string = '',
+  tier: LengthTier = LENGTH_TIERS.medium
 ): string {
   const eng: Record<string, string> = {
     AmEng: 'American English. Spelling: color, favorite, realize. Idioms: awesome, sure thing, totally.',
@@ -585,7 +643,7 @@ HE IS BEING SEXUAL OR EROTIC - PRIMARY RULE FOR THIS MESSAGE:
 She is an adult woman who owns her desire. Not shocked. Not coy. Not pulling back.
 She reads exactly what he said and matches his heat, going at most a half-step further, and only on what HE brought up. She never introduces a new act, body part, or scenario he has not mentioned first.
 Real adult language. Not heating up or chemistry or metaphors that avoid naming the thing.
-She states what she is thinking, imagining, wanting. She does not hint. Ends with one thing left unfinished.
+She states what she is thinking, imagining, wanting. She does not hint. Her closing question leaves the next move to him.
 
 THE 4 REPLIES FOR AN EROTIC MESSAGE:
 Reply 1 (Naughty): Takes his exact words further. Explicit and direct.
@@ -642,7 +700,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     ? `REGENERATION - tones already shown, pick completely different ones AND completely different angles. Different energy, different emotional register, different first word: ${previousTones.join(', ')}`
     : ''
 
-  const jsonInstruction = '{"replies":[{"tone":"Tone1","text":"reply1"},{"tone":"Tone2","text":"reply2"},{"tone":"Tone3","text":"reply3"},{"tone":"Tone4","text":"reply4"}]}'
+  const jsonInstruction = '{"replies":[{"tone":"Tone1","body":"short reaction to him","question":"closing question ending with ?"},{"tone":"Tone2","body":"...","question":"..."},{"tone":"Tone3","body":"...","question":"..."},{"tone":"Tone4","body":"...","question":"..."}]}'
 
   return [
     'You are writing 4 reply options for a real woman chatting with a man she finds genuinely interesting.',
@@ -818,8 +876,10 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'Each CTA uses a different mechanic from the list above.',
     '',
     avoidNote,
-    'Each reply: minimum 75 characters, maximum 260 characters. Every reply must be substantive enough to feel real — not a single bare question with nothing before it.',
-    'A reply that is only a question with no substance before it is too weak. Lead with something real, then ask.',
+    'LENGTH - MATCH HIS ENERGY: ' + tier.note,
+    `Each reply (body and question together): minimum ${tier.min} characters, maximum ${tier.max} characters. Count them. Going over ${tier.max} is a failure.`,
+    'EVERY REPLY ENDS WITH ONE CLOSING QUESTION. This is the call to action and it is non-negotiable. Put it in the "question" field. It always ends with a question mark. Never end on a statement, an ellipsis or a trailing thought. Open loops and teasers go inside the question itself. If a reply is running long, shorten the body, never the question. A reply with no closing question is a failed reply.',
+    'The "body" is a short reaction to what he said. It never contains a question. The "question" is the one strong question he cannot answer in one word. A bare question with no body is too weak.',
     '',
     'ORDER: Most irresistible and human reply first.',
     'TONES - pick 4 from: ' + (sexualAllowed ? 'Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy, Naughty' : 'Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable (NEVER Spicy or Naughty in this chat)'),
@@ -836,7 +896,7 @@ function isCompleteSentence(text: string): boolean {
   return /[.?!]["']?\s*$/.test(text.trim())
 }
 
-function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false): Array<{tone: string, text: string}> {
+function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long): Array<{tone: string, text: string}> {
   return replies.map((r) => {
     let text = (r.text || '').trim()
 
@@ -879,10 +939,21 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's)[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    if (text.length > 260) {
-      const cut = text.substring(0, 257)
-      const last = Math.max(cut.lastIndexOf('?'), cut.lastIndexOf('.'), cut.lastIndexOf('!'))
-      text = last > 150 ? cut.substring(0, last + 1) : cut + '...'
+    // Too long: shorten the lead sentence(s) and always keep the closing question intact.
+    if (text.length > tier.max) {
+      const parts = splitClosing(text)
+      const empty = { tone: r.tone || 'Reply', text: '' }
+      if (!parts || !parts.lead) return empty
+      const room = tier.max - parts.closing.length - 1
+      if (room < 25) return empty
+      let lead = parts.lead
+      if (lead.length > room) {
+        const cut = lead.substring(0, room)
+        const last = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'))
+        if (last < 20) return empty
+        lead = cut.substring(0, last + 1)
+      }
+      text = lead + ' ' + parts.closing
     }
 
     if (!isCompleteSentence(text)) {
@@ -895,7 +966,7 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // (and topped up by the retry in POST) instead of padded with identical stock sentences.
 
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length >= 75 && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
+  }).filter(r => r.text.length >= tier.min && r.text.length <= tier.max && endsWithQuestion(r.text) && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
 }
 
 // Detects a specific, mechanical signature of a word having been silently dropped
@@ -962,7 +1033,8 @@ export async function POST(req: Request) {
     const sexualRoute = heHasGoneSexual(context, message)
     let localContext = ''
     try { localContext = await getLocalContext(context, message) } catch { /* local context is optional */ }
-    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext)
+    const tier = getLengthTier(message)
+    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier)
     const cleanLLM = (t: string) => t
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
@@ -972,7 +1044,7 @@ export async function POST(req: Request) {
 
     const first = await generate(prompt, { sexual: sexualRoute })
     // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
-    let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext)
+    let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext, tier)
 
     // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
     // with ONE retry. If the first provider was Anthropic, the retry skips it.
@@ -982,7 +1054,7 @@ export async function POST(req: Request) {
           sexual: sexualRoute,
           avoid: first.model.startsWith('anthropic') ? ['anthropic'] : [],
         })
-        const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext)
+        const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext, tier)
         const existingTexts = new Set(finalReplies.map(r => r.text))
         for (const r of retryReplies) {
           if (finalReplies.length >= 4) break
