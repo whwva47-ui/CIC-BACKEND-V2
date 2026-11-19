@@ -1,4 +1,4 @@
-// CIC generate route v11.4.0 - Updated models August 2026
+// CIC generate route v11.5.0 - Updated models August 2026
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
@@ -24,7 +24,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v11.4.0'
+    version: 'v11.5.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -34,9 +34,14 @@ type GenResult = { text: string; model: string }
 // then Groq (model order depends on message type), OpenRouter, Gemini.
 async function generate(
   prompt: string,
-  opts: { sexual?: boolean; avoid?: string[] } = {}
+  opts: { sexual?: boolean; avoid?: string[]; deadline?: number } = {}
 ): Promise<GenResult> {
   const errors: string[] = []
+  const t0 = Date.now()
+  // Every attempt shares one deadline so the whole request stays under Vercel's time limit.
+  const left = () => (opts.deadline ?? Infinity) - Date.now()
+  const cap = (ms: number) => Math.max(1500, Math.min(ms, left() - 1000))
+  const hasTime = (need = 4000) => left() > need
   const avoid = new Set(opts.avoid || [])
   const groqKey = process.env.GROQ_API_KEY
   const openrouterKey = process.env.OPENROUTER_API_KEY
@@ -45,10 +50,10 @@ async function generate(
   const stripThink = (t: string) => t.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 
   // ── Anthropic (optional) ─────────────────────────────────────────────────
-  if (anthropicKey && !opts.sexual && !avoid.has('anthropic')) {
+  if (anthropicKey && !opts.sexual && !avoid.has('anthropic') && hasTime(12000)) {
     try {
       const ctrl = new AbortController()
-      const timer = setTimeout(() => ctrl.abort(), 20000)
+      const timer = setTimeout(() => ctrl.abort(), cap(15000))
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -58,7 +63,7 @@ async function generate(
         },
         body: JSON.stringify({
           model: 'claude-sonnet-5-5',
-          max_tokens: 1200,
+          max_tokens: 800,
           temperature: 0.9,
           messages: [{ role: 'user', content: prompt }],
         }),
@@ -69,7 +74,7 @@ async function generate(
       const text = data?.content?.[0]?.text
       if (text) {
         const clean = stripThink(text)
-        if (clean) { console.log('[CIC] Anthropic: claude-sonnet-5-5'); return { text: clean, model: 'anthropic/claude-sonnet-5-5' } }
+        if (clean) { console.log('[CIC] Anthropic: claude-sonnet-5-5', Date.now() - t0, 'ms'); return { text: clean, model: 'anthropic/claude-sonnet-5-5' } }
       }
       errors.push(`Anthropic: ${JSON.stringify(data?.error || 'empty').substring(0, 80)}`)
     } catch (e: any) {
@@ -95,9 +100,10 @@ async function generate(
           'openai/gpt-oss-20b',
         ]
     for (const model of groqModels) {
+      if (!hasTime()) { errors.push('Groq: out of time'); break }
       try {
         const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), 12000)
+        const timeout = setTimeout(() => controller.abort(), cap(10000))
         const result = await generateText({
           model: groq(model),
           prompt,
@@ -108,7 +114,7 @@ async function generate(
         clearTimeout(timeout)
         if (result.text) {
           const clean = stripThink(result.text)
-          if (clean) { console.log('[CIC] Groq:', model); return { text: clean, model: 'groq/' + model } }
+          if (clean) { console.log('[CIC] Groq:', model, Date.now() - t0, 'ms'); return { text: clean, model: 'groq/' + model } }
         }
       } catch (e: any) {
         const s = e?.statusCode || e?.status || ''
@@ -125,16 +131,17 @@ async function generate(
   }
 
   // ── OpenRouter fallback ───────────────────────────────────────────────────
-  if (openrouterKey && !avoid.has('openrouter')) {
+  if (openrouterKey && !avoid.has('openrouter') && hasTime(5000)) {
     const orModels = [
       'google/gemma-3-27b-it',
       'mistralai/mistral-small-3.2-24b-instruct',
       'microsoft/phi-4-reasoning-plus:free',
     ]
     for (const orModel of orModels) {
+      if (!hasTime()) { errors.push('OpenRouter: out of time'); break }
       try {
         const orController = new AbortController()
-        const orTimeout = setTimeout(() => orController.abort(), 15000)
+        const orTimeout = setTimeout(() => orController.abort(), cap(12000))
         const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -157,7 +164,7 @@ async function generate(
         const text = data?.choices?.[0]?.message?.content
         if (text) {
           const cleanText = stripThink(text)
-          if (cleanText) { console.log('[CIC] OpenRouter:', orModel); return { text: cleanText, model: 'openrouter/' + orModel } }
+          if (cleanText) { console.log('[CIC] OpenRouter:', orModel, Date.now() - t0, 'ms'); return { text: cleanText, model: 'openrouter/' + orModel } }
         }
         const errCode = data?.error?.code || data?.error?.status || 0
         errors.push(`OpenRouter/${orModel}: ${JSON.stringify(data?.error || 'empty').substring(0, 60)}`)
@@ -170,11 +177,12 @@ async function generate(
 
   // ── Google Gemini fallback ────────────────────────────────────────────────
   // gemini-1.5 models are retired. Check Google AI Studio for the current model names.
-  if (googleKey && !avoid.has('gemini')) {
-    for (const geminiModel of ['gemini-2.5-pro', 'gemini-2.5-flash']) {
+  if (googleKey && !avoid.has('gemini') && hasTime(5000)) {
+    for (const geminiModel of ['gemini-2.5-flash', 'gemini-2.5-pro']) {
+      if (!hasTime()) { errors.push('Gemini: out of time'); break }
       try {
         const gemCtrl = new AbortController()
-        const gemTimeout = setTimeout(() => gemCtrl.abort(), 15000)
+        const gemTimeout = setTimeout(() => gemCtrl.abort(), cap(12000))
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${googleKey}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -187,7 +195,7 @@ async function generate(
         clearTimeout(gemTimeout)
         const data = await res.json()
         const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
-        if (text) { console.log('[CIC] Gemini:', geminiModel); return { text: stripThink(text), model: 'gemini/' + geminiModel } }
+        if (text) { console.log('[CIC] Gemini:', geminiModel, Date.now() - t0, 'ms'); return { text: stripThink(text), model: 'gemini/' + geminiModel } }
         errors.push(`Gemini/${geminiModel}: ${JSON.stringify(data?.error || 'empty').substring(0, 60)}`)
       } catch (e: any) {
         errors.push(`Gemini/${geminiModel}: ${e?.message?.substring(0, 60)}`)
@@ -498,7 +506,7 @@ async function getLocalContext(context: string, message: string): Promise<string
   })()
 
   // Hard cap so lookups can never slow a reply by more than a few seconds.
-  return Promise.race([work, new Promise<string>(r => setTimeout(() => r(''), 4000))]).catch(() => '')
+  return Promise.race([work, new Promise<string>(r => setTimeout(() => r(''), 3000))]).catch(() => '')
 }
 
 function buildPrompt(
@@ -983,6 +991,7 @@ function hasDroppedWordArtifact(text: string): boolean {
 }
 
 export async function POST(req: Request) {
+  const reqStart = Date.now()
   const headers = cors()
   try {
     const body = await req.json()
@@ -1015,7 +1024,7 @@ export async function POST(req: Request) {
         '3. Warm gentle callback',
         'Return ONLY valid JSON: {"analysis":"why he went quiet","triggers":[{"label":"l","text":"t"},{"label":"l","text":"t"},{"label":"l","text":"t"}]}',
       ].join('\n')
-      const raw = (await generate(rp)).text
+      const raw = (await generate(rp, { deadline: reqStart + 45000 })).text
       try {
         const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
         const parsed = JSON.parse(clean)
@@ -1042,16 +1051,20 @@ export async function POST(req: Request) {
       .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
       .trim()
 
-    const first = await generate(prompt, { sexual: sexualRoute })
+    // Vercel kills the function at maxDuration (60s). Stop trying well before that.
+    const deadline = reqStart + 45000
+    const first = await generate(prompt, { sexual: sexualRoute, deadline })
     // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
     let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext, tier)
 
     // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
     // with ONE retry. If the first provider was Anthropic, the retry skips it.
-    if (finalReplies.length < 4) {
+    // Retry only if we are short AND there is plenty of time left. A slow retry is worse than three good replies.
+    if (finalReplies.length < 3 && deadline - Date.now() > 15000) {
       try {
         const retry = await generate(prompt, {
           sexual: sexualRoute,
+          deadline,
           avoid: first.model.startsWith('anthropic') ? ['anthropic'] : [],
         })
         const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext, tier)
@@ -1069,7 +1082,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Could not produce a clean set of replies. Tap Generate again.', replies: [], remaining: 999 }, { status: 200, headers })
     }
 
-    return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: first.model }, { headers })
+    const elapsedMs = Date.now() - reqStart
+    console.log('[CIC] Done in', elapsedMs, 'ms |', first.model, '|', finalReplies.length, 'replies')
+    return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: first.model, elapsedMs }, { headers })
 
   } catch (error: any) {
     const errMsg = error?.message || 'Generation failed'
