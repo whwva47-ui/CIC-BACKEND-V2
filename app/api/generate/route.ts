@@ -1,4 +1,4 @@
-// CIC generate route v11.7.0 - Updated models August 2026
+// CIC generate route v11.8.0 - Updated models August 2026
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
@@ -24,7 +24,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v11.7.0'
+    version: 'v11.8.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -341,7 +341,7 @@ function describeVoice(herLines: string[]): string {
   ].filter(Boolean).join('; ')
 }
 
-function buildThreadBlock(context: string, noQuestion: boolean = false): string {
+function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: boolean = false, message: string = ''): string {
   const hist = parseHistory(context)
   if (!hist.length) {
     return [
@@ -378,18 +378,42 @@ function buildThreadBlock(context: string, noQuestion: boolean = false): string 
       herLines.slice(-3).map(t => '"' + clip(t, 140) + '"').join(' | '))
     if (voice) parts.push('Her habits: ' + voice + '.')
   }
+  // Break his latest message(s) into the separate things he said, so none of them is skipped.
+  const latest = (pending.length ? pending.join(' ') : message).replace(/\s+/g, ' ').trim()
+  const points = (latest.match(/[^.!?]+[.!?]*/g) || []).map(x => x.trim()).filter(x => x.length > 3).slice(0, 6)
+  if (points.length) {
+    parts.push(
+      '',
+      'EVERYTHING HE SAID IN HIS LATEST MESSAGE, IN ORDER. THE BODY MUST DEAL WITH EACH POINT:',
+      points.map((x, i) => (i + 1) + '. ' + clip(x, 160)).join('\n'),
+      'For each point, give a real, specific response in one short clause or sentence: a question gets a personal answer with her own detail, news or a feeling gets a reaction that fits it (sadness gets care first), a compliment gets received warmly and answered with her own specific one, a plan or request gets a clear answer. Cover them in his order and do not skip any, even a small aside. Do not repeat his words back. Do not turn the body into a list. It should read as one natural text.',
+      'Only after every point is handled does the closing call to action come in. It builds on the most alive point on the SAME topic. It never changes the subject.'
+    )
+  }
   parts.push(
     '',
     'CONTINUITY - CHECK THIS LAST, BEFORE WRITING:',
     '1. Every reply is the natural NEXT TURN of this exact conversation. It picks up a specific detail from the thread above, never a topic from nowhere.',
     '2. If his message is short or vague ("ok", "lol", "yes", "hmm", "haha"), read it as his answer to HER last message and keep that same topic moving. It is not a fresh start and the subject does not change.',
     '3. Same woman, same voice. Match the warmth, humour, rhythm and habits of her earlier messages. Do not suddenly become more poetic, more intense, more formal or more heated than she has been so far. Move the energy forward by one notch at most.',
-    noQuestion
+    sleepy
+      ? '4. He is winding down for sleep. Tone the conversation down. Do not open a new topic or push the energy forward (see SLEEP MODE).'
+      : noQuestion
       ? '4. He has just said she asks too many questions. Own it lightly in a few words, answer what he said, then close with a statement call to action that is NOT a question (see NO-QUESTION MODE). It grows out of what is being discussed right now.'
       : '4. Answer what he asked before asking anything new. The closing question grows out of what is being discussed right now. If it could be pasted into a different conversation, rewrite it.',
     '5. Never restate or quote his words back to him. Move the thread forward.',
     '6. Use only facts that appear in the thread. Never invent details about him or about earlier messages.',
   )
+  if (sleepy) {
+    parts.push(
+      '',
+      'SLEEP MODE - HE IS GOING TO SLEEP OR IS TIRED. THIS OVERRIDES EVERY RULE ABOUT ADVANCING THE CONVERSATION:',
+      'Do not escalate, do not open a new topic and do not make the energy hotter. Slow everything down and soften it. If the chat had been sexual, bring it down to affection and warmth, not a push for more.',
+      'The body is short and calm. Acknowledge that he is tired, wish him rest, and add one small specific warm touch drawn from what you two talked about today.',
+      'The closing line is still a call to action, but a gentle parting hook that makes him want to come back: something to carry into his dreams or to tell her when he wakes up, tied to the topic already on the table. It can be a very light statement or a soft, easy question. It must not ask for effort, long answers or a decision. No promises to meet, no promised time or day.',
+      'Do not try to keep him awake. Do not guilt him for leaving. Four different warm, human ways to say goodnight.'
+    )
+  }
   return parts.join('\n')
 }
 
@@ -401,6 +425,13 @@ const LENGTH_TIERS: Record<string, LengthTier> = {
   medium: { name: 'medium', min: 80, max: 190, note: 'He wrote a normal-length message. She replies in two or three sentences of reaction, then the question.' },
   long: { name: 'long', min: 110, max: 260, note: 'He wrote a lot, so she gives it real attention: three or four sentences that pick up specific details he shared, then the question.' },
   sensitive: { name: 'sensitive', min: 100, max: 260, note: 'This is an important moment in the chat, so she takes the room she needs to handle it well, and still finishes with the one closing question.' },
+}
+
+// He is winding down for the night: the reply should tone the conversation down, not push it forward.
+function detectSleepy(context: string, message: string): boolean {
+  const last = message || ''
+  if (/\b(can'?t|cannot|couldn'?t|unable to|not able to|won'?t be able to|trouble|hard to) (get to )?sleep\b|\bnot (even )?sleepy\b|\bnot (even )?tired\b|\bnever sleep|\b(but|though|still) (i )?(wanna|want to|gonna|will|can) (keep|stay)|\b(keep|stay) (talking|chatting|up|awake)|\bnot ready (to|for) (sleep|bed)|\bno(t)? (going|going to) (to )?(bed|sleep) yet/i.test(last)) return false
+  return /\b(good ?night|goodnight|g'?night|gnight|nighty|night night|nite nite|sweet dreams|going to (bed|sleep)|gonna (go to )?(bed|sleep)|off to (bed|sleep)|heading (to|for) (bed|sleep)|head(ed)? to bed|time (for|to go to) bed|time to sleep|need (to get )?(some )?sleep|(getting|feeling|so|very|really|pretty) (sleepy|tired|exhausted)|i'?m (so |very |really )?(sleepy|exhausted)|i'?m (so |very |really )?tired(?! of)|call it a night|hit the (hay|sack)|turn(ing)? in for the night|about to (sleep|crash)|crash(ing)? (now|soon)|eyes (are )?(closing|heavy)|can'?t keep my eyes open|bedtime|sleep time|knocked out|i have to sleep)\b/i.test(last)
 }
 
 // When he complains about being asked too many questions, the closing call to action must NOT be a question.
@@ -603,6 +634,25 @@ async function getLocalContext(context: string, message: string): Promise<string
   return Promise.race([work, new Promise<string>(r => setTimeout(() => r(''), 3000))]).catch(() => '')
 }
 
+const BODY_QUALITY = [
+  'BODY QUALITY - THE PART BEFORE THE CALL TO ACTION IS WHAT MAKES HIM FEEL HEARD:',
+  'The body is where she earns the right to ask. It must do three things in this order, in as many sentences as the length limit allows:',
+  '1. REACT to ONE specific detail he actually wrote (a word, a place, a habit, a feeling), in her own reaction. Not a summary of what he said and not a compliment that fits anyone.',
+  '2. GIVE something of her own: a small opinion, a quick personal detail, a funny honest admission, or a tiny story beat. Real people trade a little of themselves. A body made only of reacting to him feels like an interviewer.',
+  '3. BRIDGE: the last words of the body lead naturally into the closing line, so the closing line feels like the next thing she would say and not a switch.',
+  'Rules for the body:',
+  '- One idea per sentence. Short sentences are fine. A fragment is fine. Never stack three adjectives.',
+  '- Vary the opening. Never open with "Wow", "Aww", "That is so", "That sounds", "I love that", "Oh wow", "Haha" every time. Start from the detail itself, or a reaction in her own words.',
+  '- Never repeat or echo his sentence back to him, and never say "you said". Show she listened by what she does with it.',
+  '- Specific beats vague. "Night shifts and still cooking" beats "that is impressive". Concrete nouns beat adjectives.',
+  '- If he answered something she asked, acknowledge his answer first, then move on. Never ignore it.',
+  '- If he complimented her, take it with a bit of personality (a light tease, a shy admission), never a plain "thank you" and never fishing for more.',
+  '- If he shared something heavy, one honest human sentence first. No advice, no cheerleading, no therapy words.',
+  '- Humour must be light and from the situation. Never a joke that could be pasted anywhere.',
+  '- Her voice must stay consistent with the earlier messages in the thread above.',
+  'Before writing each reply, check the body: could a different woman send it to a different man? If yes, rewrite it with something only he gave her.',
+].join('\n')
+
 function buildPrompt(
   message: string,
   context: string,
@@ -615,7 +665,8 @@ function buildPrompt(
   localContext: string = '',
   tier: LengthTier = LENGTH_TIERS.medium,
   thread: string = '',
-  noQuestion: boolean = false
+  noQuestion: boolean = false,
+  sleepy: boolean = false
 ): string {
   const eng: Record<string, string> = {
     AmEng: 'American English. Spelling: color, favorite, realize. Idioms: awesome, sure thing, totally.',
@@ -804,8 +855,8 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     ? `REGENERATION - tones already shown, pick completely different ones AND completely different angles. Different energy, different emotional register, different first word: ${previousTones.join(', ')}`
     : ''
 
-  const jsonInstruction = noQuestion
-    ? '{"replies":[{"tone":"Tone1","body":"short reaction to him","cta":"closing call to action, a statement, no question mark"},{"tone":"Tone2","body":"...","cta":"..."},{"tone":"Tone3","body":"...","cta":"..."},{"tone":"Tone4","body":"...","cta":"..."}]}'
+  const jsonInstruction = (noQuestion || sleepy)
+    ? '{"replies":[{"tone":"Tone1","body":"short reaction to him","cta":"closing call to action"},{"tone":"Tone2","body":"...","cta":"..."},{"tone":"Tone3","body":"...","cta":"..."},{"tone":"Tone4","body":"...","cta":"..."}]}'
     : '{"replies":[{"tone":"Tone1","body":"short reaction to him","question":"closing question ending with ?"},{"tone":"Tone2","body":"...","question":"..."},{"tone":"Tone3","body":"...","question":"..."},{"tone":"Tone4","body":"...","question":"..."}]}'
 
   return [
@@ -984,7 +1035,9 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     avoidNote,
     'LENGTH - MATCH HIS ENERGY: ' + tier.note,
     `Each reply (body and question together): minimum ${tier.min} characters, maximum ${tier.max} characters. Count them. Going over ${tier.max} is a failure.`,
-    ...(noQuestion ? [
+    ...(sleepy ? [
+      'SLEEP MODE - HE IS GOING TO SLEEP OR IS TIRED. Tone the conversation down instead of advancing it, as set out in the SLEEP MODE block at the end of this prompt. Put the gentle closing hook in the "cta" field. It may be a light statement or a soft easy question.',
+    ] : noQuestion ? [
       'NO-QUESTION MODE - HE HAS JUST COMPLAINED ABOUT TOO MANY QUESTIONS. THIS OVERRIDES EVERY RULE ABOUT CLOSING QUESTIONS.',
       'There is NO question mark anywhere in any reply. Not in the body, not in the closing line. Every reply ends with a period or an exclamation mark.',
       'The body owns it lightly in a few words, with a smile and no grovelling, then reacts to what he actually said.',
@@ -1009,6 +1062,8 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '',
     thread,
     '',
+    BODY_QUALITY,
+    '',
     'Return ONLY valid JSON - no markdown, no explanation:',
     jsonInstruction,
   ].filter(Boolean).join('\n')
@@ -1026,7 +1081,7 @@ function splitLastSentence(text: string): { lead: string; closing: string } | nu
   return { lead: m[1].trim(), closing: m[2].trim() }
 }
 
-function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false): Array<{tone: string, text: string}> {
+function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false): Array<{tone: string, text: string}> {
   return replies.map((r) => {
     let text = (r.text || '').trim()
 
@@ -1072,12 +1127,12 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // A reply that promises a meetup or contact details is dropped, not swapped for canned text.
     if (madePromise || softPromise) return { tone: r.tone || 'Reply', text: '' }
 
-    text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's)[,!.]?\s*/i, '')
+    text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's|aww+|oh wow|that is so (sweet|nice|cool|amazing)|that's so (sweet|nice|cool|amazing))[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
     // Too long: shorten the lead sentence(s) and always keep the closing question intact.
     if (text.length > tier.max) {
-      const parts = noQuestion ? splitLastSentence(text) : splitClosing(text)
+      const parts = (noQuestion || (sleepy && !endsWithQuestion(text))) ? splitLastSentence(text) : splitClosing(text)
       const empty = { tone: r.tone || 'Reply', text: '' }
       if (!parts || !parts.lead) return empty
       const room = tier.max - parts.closing.length - 1
@@ -1102,7 +1157,7 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // (and topped up by the retry in POST) instead of padded with identical stock sentences.
 
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length >= tier.min && r.text.length <= tier.max && (noQuestion ? (!r.text.includes('?') && /[.!]["')\]]?$/.test(r.text)) : endsWithQuestion(r.text)) && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
+  }).filter(r => r.text.length >= tier.min && r.text.length <= tier.max && (sleepy ? /[.!?]["')\]]?$/.test(r.text) : noQuestion ? (!r.text.includes('?') && /[.!]["')\]]?$/.test(r.text)) : endsWithQuestion(r.text)) && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
 }
 
 // Detects a specific, mechanical signature of a word having been silently dropped
@@ -1171,8 +1226,9 @@ export async function POST(req: Request) {
     let localContext = ''
     try { localContext = await getLocalContext(context, message) } catch { /* local context is optional */ }
     const tier = getLengthTier(message)
-    const noQuestion = detectQuestionFatigue(context, message)
-    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier, buildThreadBlock(context, noQuestion), noQuestion)
+    const sleepy = detectSleepy(context, message)
+    const noQuestion = !sleepy && detectQuestionFatigue(context, message)
+    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier, buildThreadBlock(context, noQuestion, sleepy, message), noQuestion, sleepy)
     const cleanLLM = (t: string) => t
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
@@ -1184,7 +1240,7 @@ export async function POST(req: Request) {
     const deadline = reqStart + 45000
     const first = await generate(prompt, { sexual: sexualRoute, deadline })
     // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
-    let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext, tier, noQuestion)
+    let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext, tier, noQuestion, sleepy)
 
     // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
     // with ONE retry. If the first provider was Anthropic, the retry skips it.
@@ -1196,7 +1252,7 @@ export async function POST(req: Request) {
           deadline,
           avoid: first.model.startsWith('anthropic') ? ['anthropic'] : [],
         })
-        const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext, tier, noQuestion)
+        const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext, tier, noQuestion, sleepy)
         const existingTexts = new Set(finalReplies.map(r => r.text))
         for (const r of retryReplies) {
           if (finalReplies.length >= 4) break
