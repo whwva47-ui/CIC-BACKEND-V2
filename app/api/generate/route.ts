@@ -1,7 +1,5 @@
-// CIC generate route v11.8.0 - Updated models August 2026
+// CIC generate route v12.0.0 - speed rebuild
 import { NextResponse } from 'next/server'
-import { generateText } from 'ai'
-import { createGroq } from '@ai-sdk/groq'
 
 function cors() {
   return {
@@ -24,11 +22,89 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v11.8.0'
+    version: 'v12.0.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
 type GenResult = { text: string; model: string }
+
+// ═══ SPEED LAYER ═══════════════════════════════════════════════════════════════
+// Staggered race: the first model starts at once. If it has not answered after `staggerMs`, the next
+// model starts in parallel (and starts immediately if the first one fails). The first valid answer
+// wins and the rest are cancelled. A slow or rate-limited model no longer holds up the whole reply.
+type RaceTask = { label: string; run: (signal: AbortSignal) => Promise<string> }
+
+function raceStaggered(tasks: RaceTask[], staggerMs: number, capMs: number, errors: string[]): Promise<GenResult | null> {
+  if (!tasks.length) return Promise.resolve(null)
+  return new Promise<GenResult | null>((resolve) => {
+    const ctrls: AbortController[] = []
+    let started = 0
+    let finished = 0
+    let done = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const finish = (r: GenResult | null) => {
+      if (done) return
+      done = true
+      if (timer) clearTimeout(timer)
+      ctrls.forEach(c => { try { c.abort() } catch { /* already finished */ } })
+      resolve(r)
+    }
+    const failed = () => {
+      finished++
+      if (done) return
+      if (finished >= tasks.length) finish(null)
+      else launchNext()
+    }
+    const launchNext = () => {
+      if (done || started >= tasks.length) return
+      const t = tasks[started++]
+      const ctrl = new AbortController()
+      ctrls.push(ctrl)
+      const to = setTimeout(() => ctrl.abort(), capMs)
+      t.run(ctrl.signal).then((text) => {
+        clearTimeout(to)
+        if (text) finish({ text, model: t.label })
+        else { if (!done) errors.push(t.label + ': empty'); failed() }
+      }).catch((e: any) => {
+        clearTimeout(to)
+        if (!done) errors.push(t.label + ': ' + String(e?.message || e).substring(0, 80))
+        failed()
+      })
+      if (timer) clearTimeout(timer)
+      if (started < tasks.length) timer = setTimeout(launchNext, staggerMs)
+    }
+    launchNext()
+  })
+}
+
+// Groq through its OpenAI-compatible API, so reasoning effort and JSON mode can be set directly.
+// gpt-oss models think before they answer; on "low" that costs a fraction of a second instead of
+// several seconds, and the replies are short and creative, so deep reasoning adds nothing here.
+async function callGroq(model: string, key: string, prompt: string, signal: AbortSignal): Promise<string> {
+  const isOss = model.startsWith('openai/gpt-oss')
+  const base: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.8,
+    max_completion_tokens: isOss ? 1100 : 750,
+  }
+  const rich = { ...base, response_format: { type: 'json_object' }, ...(isOss ? { reasoning_effort: 'low', include_reasoning: false } : {}) }
+  const post = (body: Record<string, unknown>) => fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify(body),
+    signal,
+  })
+  let res = await post(rich)
+  // A model that does not accept one of the optional settings is retried once with plain settings.
+  if (res.status === 400) res = await post(base)
+  const data: any = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const err: any = new Error(`${res.status} ${String(data?.error?.message || 'error').substring(0, 80)}`)
+    throw err
+  }
+  return (data?.choices?.[0]?.message?.content || '').toString()
+}
 
 // Provider chain. Optional Anthropic first (non-sexual messages only, needs ANTHROPIC_API_KEY),
 // then Groq (model order depends on message type), OpenRouter, Gemini.
@@ -49,8 +125,12 @@ async function generate(
   const anthropicKey = process.env.ANTHROPIC_API_KEY
   const stripThink = (t: string) => t.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 
-  // ── Anthropic (optional) ─────────────────────────────────────────────────
-  if (anthropicKey && !opts.sexual && !avoid.has('anthropic') && hasTime(12000)) {
+  // ── Anthropic (optional, non-sexual only) ────────────────────────────────
+  // Claude is the slowest option here, so by default it is a fallback after Groq. Set
+  // CIC_PREFER_CLAUDE=1 in Vercel to put it back in front.
+  const tryAnthropic = async (): Promise<GenResult | null> => {
+    if (!anthropicKey || opts.sexual || avoid.has('anthropic') || !hasTime(12000)) return null
+    const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5'
     try {
       const ctrl = new AbortController()
       const timer = setTimeout(() => ctrl.abort(), cap(15000))
@@ -62,8 +142,8 @@ async function generate(
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-5-5',
-          max_tokens: 800,
+          model,
+          max_tokens: 700,
           temperature: 0.8,
           messages: [{ role: 'user', content: prompt }],
         }),
@@ -74,17 +154,19 @@ async function generate(
       const text = data?.content?.[0]?.text
       if (text) {
         const clean = stripThink(text)
-        if (clean) { console.log('[CIC] Anthropic: claude-sonnet-5-5', Date.now() - t0, 'ms'); return { text: clean, model: 'anthropic/claude-sonnet-5-5' } }
+        if (clean) { console.log('[CIC] Anthropic:', model, Date.now() - t0, 'ms'); return { text: clean, model: 'anthropic/' + model } }
       }
       errors.push(`Anthropic: ${JSON.stringify(data?.error || 'empty').substring(0, 80)}`)
     } catch (e: any) {
       errors.push(`Anthropic: ${e?.message?.substring(0, 60)}`)
     }
+    return null
   }
+  const claudeFirst = process.env.CIC_PREFER_CLAUDE === '1'
+  if (claudeFirst) { const r = await tryAnthropic(); if (r) return r }
 
-  // ── Groq ─────────────────────────────────────────────────────────────────
-  if (groqKey && !avoid.has('groq')) {
-    const groq = createGroq({ apiKey: groqKey })
+  // ── Groq (staggered race) ────────────────────────────────────────────────
+  if (groqKey && !avoid.has('groq') && hasTime()) {
     // gpt-oss is the most safety-tuned of these and tends to refuse or silently drop
     // explicit words, so it goes last for sexual messages and first for everything else.
     const groqModels = opts.sexual
@@ -99,36 +181,15 @@ async function generate(
           'llama-3.3-70b-versatile',
           'openai/gpt-oss-20b',
         ]
-    for (const model of groqModels) {
-      if (!hasTime()) { errors.push('Groq: out of time'); break }
-      try {
-        const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), cap(10000))
-        const result = await generateText({
-          model: groq(model),
-          prompt,
-          temperature: 0.8,
-          maxTokens: 1800,
-          abortSignal: controller.signal,
-        })
-        clearTimeout(timeout)
-        if (result.text) {
-          const clean = stripThink(result.text)
-          if (clean) { console.log('[CIC] Groq:', model, Date.now() - t0, 'ms'); return { text: clean, model: 'groq/' + model } }
-        }
-      } catch (e: any) {
-        const s = e?.statusCode || e?.status || ''
-        const msg = e?.message || ''
-        errors.push(`Groq/${model}(${s}): ${msg.substring(0, 80)}`)
-        // On rate limit — skip immediately to next model, no delay
-        if (s === 429 || msg.includes('Rate limit') || msg.includes('rate limit')) continue
-        // On model not found — skip immediately
-        if (s === 404 || msg.includes('does not exist') || msg.includes('not found')) continue
-        // On other errors — break and try next provider
-        break
-      }
-    }
+    const tasks: RaceTask[] = groqModels.map(m => ({
+      label: 'groq/' + m,
+      run: (signal: AbortSignal) => callGroq(m, groqKey, prompt, signal).then(stripThink),
+    }))
+    const won = await raceStaggered(tasks, 3500, cap(12000), errors)
+    if (won) { console.log('[CIC] Groq:', won.model, Date.now() - t0, 'ms'); return won }
   }
+
+  if (!claudeFirst) { const r = await tryAnthropic(); if (r) return r }
 
   // ── OpenRouter fallback ───────────────────────────────────────────────────
   if (openrouterKey && !avoid.has('openrouter') && hasTime(5000)) {
@@ -621,7 +682,7 @@ async function getLocalContext(context: string, message: string): Promise<string
     if (sports.length) parts.push(`- Sports he follows (${sport}): ` + sports.map(h => `"${h}"`).join(' | '))
     parts.push(
       'RULES FOR THIS: Use at most ONE item, and only if it connects to what he just said or gives her question a natural hook. Never list several. ' +
-      'She can say she saw or heard it, but she never invents details beyond what is listed here. ' +
+      'She never says she looked anything up. She mentions it only the way someone who happens to know would, and she never invents details beyond what is listed here. ' +
       'She never claims to be in his city or to be having the same weather. No politics, crime, accidents or tragedy even if one slipped through. ' +
       'If nothing here fits his message naturally, she ignores this section completely.'
     )
@@ -631,7 +692,7 @@ async function getLocalContext(context: string, message: string): Promise<string
   })()
 
   // Hard cap so lookups can never slow a reply by more than a few seconds.
-  return Promise.race([work, new Promise<string>(r => setTimeout(() => r(''), 3000))]).catch(() => '')
+  return Promise.race([work, new Promise<string>(r => setTimeout(() => r(''), 1800))]).catch(() => '')
 }
 
 const BODY_QUALITY = [
@@ -1245,7 +1306,7 @@ export async function POST(req: Request) {
     // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
     // with ONE retry. If the first provider was Anthropic, the retry skips it.
     // Retry only if we are short AND there is plenty of time left. A slow retry is worse than three good replies.
-    if (finalReplies.length < 3 && deadline - Date.now() > 15000) {
+    if (finalReplies.length < 3 && deadline - Date.now() > 18000) {
       try {
         const retry = await generate(prompt, {
           sexual: sexualRoute,
@@ -1264,11 +1325,15 @@ export async function POST(req: Request) {
     }
 
     if (!finalReplies.length) {
+      console.error('[CIC] Empty result:', JSON.stringify({
+        parsed: parseReplies(cleanLLM(first.text)).length, tier: tier.name, noQuestion, sleepy, sexualRoute,
+        model: first.model, ms: Date.now() - reqStart,
+      }))
       return NextResponse.json({ error: 'Could not produce a clean set of replies. Tap Generate again.', replies: [], remaining: 999 }, { status: 200, headers })
     }
 
     const elapsedMs = Date.now() - reqStart
-    console.log('[CIC] Done in', elapsedMs, 'ms |', first.model, '|', finalReplies.length, 'replies')
+    console.log('[CIC] Done in', elapsedMs, 'ms |', first.model, '|', finalReplies.length, 'replies | tier', tier.name, '| sexual', sexualRoute, '| noQ', noQuestion, '| sleepy', sleepy)
     return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: first.model, elapsedMs }, { headers })
 
   } catch (error: any) {
