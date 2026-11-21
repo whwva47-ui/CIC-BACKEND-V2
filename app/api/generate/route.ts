@@ -1,4 +1,4 @@
-// CIC generate route v11.5.0 - Updated models August 2026
+// CIC generate route v11.6.0 - Updated models August 2026
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
@@ -24,7 +24,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v11.5.0'
+    version: 'v11.6.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -64,7 +64,7 @@ async function generate(
         body: JSON.stringify({
           model: 'claude-sonnet-5-5',
           max_tokens: 800,
-          temperature: 0.9,
+          temperature: 0.8,
           messages: [{ role: 'user', content: prompt }],
         }),
         signal: ctrl.signal,
@@ -107,7 +107,7 @@ async function generate(
         const result = await generateText({
           model: groq(model),
           prompt,
-          temperature: 0.88,
+          temperature: 0.8,
           maxTokens: 1800,
           abortSignal: controller.signal,
         })
@@ -152,7 +152,7 @@ async function generate(
           body: JSON.stringify({
             model: orModel,
             messages: [{ role: 'user', content: prompt }],
-            temperature: 0.88,
+            temperature: 0.8,
             max_tokens: 1000,
             // Disable thinking mode for models that support it (Qwen, DeepSeek)
             chat_template_kwargs: { thinking: false },
@@ -188,7 +188,7 @@ async function generate(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.88, maxOutputTokens: 1000 }
+            generationConfig: { temperature: 0.8, maxOutputTokens: 1000 }
           }),
           signal: gemCtrl.signal,
         })
@@ -303,6 +303,94 @@ const CLIENT_TYPE_HINTS: Record<string, string> = {
   talker: 'He tends to write long, story-driven messages — lean into playful curiosity and follow-up hooks that invite him to keep telling his story, over drier or more clipped tones.',
   naughty: 'He tends to get straight to the point with direct, forward messages — matching directness while holding a little back (push-pull) tends to land better than fully warm/soft tones here.',
   silent: 'He tends to write short, guarded replies — favor a light tease or gentle curiosity that re-engages without pressure, over long warm paragraphs he is unlikely to match.',
+}
+
+// ═══ CONVERSATION THREAD ════════════════════════════════════════════════════════
+// The history sits near the top of a very long prompt, where models give it the least attention.
+// So the last exchanges, what he is replying to, and her own voice are also restated right before
+// the model writes, in a compact block.
+type HistLine = { who: 'HIM' | 'ME'; text: string }
+
+function parseHistory(context: string): HistLine[] {
+  const out: HistLine[] = []
+  for (const raw of (context || '').split('\n')) {
+    const m = raw.match(/^\s*\[\d+\]\s*(HIM|HER|ME)\s*:\s*(.+?)\s*$/i)
+    if (!m) continue
+    let text = m[2]
+    if (/^\[CLIENT (SENT|SHARED) A PHOTO/i.test(text)) text = '(he sent a photo)'
+    out.push({ who: m[1].toUpperCase() === 'HIM' ? 'HIM' : 'ME', text })
+  }
+  return out
+}
+
+function clip(t: string, n: number): string {
+  return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t
+}
+
+function describeVoice(herLines: string[]): string {
+  const sample = herLines.slice(-5)
+  if (!sample.length) return ''
+  const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u
+  const usesEmoji = sample.some(t => emoji.test(t))
+  const exclaim = sample.filter(t => t.includes('!')).length
+  const ellipsis = sample.some(t => /\.\.\.|…/.test(t))
+  const asks = sample.filter(t => t.includes('?')).length
+  return [
+    usesEmoji ? 'she has used emojis, so one is fine if it fits' : 'she has not used emojis, so use none',
+    exclaim >= 2 ? 'she often uses exclamation marks' : 'she rarely uses exclamation marks',
+    ellipsis ? 'she sometimes trails off with "..."' : '',
+    asks >= sample.length - 1 ? 'she usually ends with a question' : '',
+  ].filter(Boolean).join('; ')
+}
+
+function buildThreadBlock(context: string): string {
+  const hist = parseHistory(context)
+  if (!hist.length) {
+    return [
+      'CONVERSATION CONTEXT: no earlier messages could be read from the chat.',
+      'Treat this as the start of the thread. Answer his message directly and warmly, ask one question about what he just said, and do NOT invent shared history, plans or details that nobody mentioned.',
+    ].join('\n')
+  }
+
+  const thread = hist.slice(-8)
+    .map(l => (l.who === 'HIM' ? 'HIM' : 'HER (you, earlier)') + ': ' + clip(l.text, 220))
+    .join('\n')
+
+  // His unanswered messages are the run of HIM lines at the very end of the history.
+  const pending: string[] = []
+  for (let i = hist.length - 1; i >= 0 && hist[i].who === 'HIM'; i--) pending.unshift(hist[i].text)
+  let herLast = ''
+  for (let i = hist.length - pending.length - 1; i >= 0; i--) {
+    if (hist[i].who === 'ME') { herLast = hist[i].text; break }
+  }
+  const herLines = hist.filter(l => l.who === 'ME').map(l => l.text)
+
+  const parts: string[] = [
+    'THE CONVERSATION SO FAR - THIS IS WHAT SHE IS CONTINUING (newest last):',
+    thread,
+  ]
+  if (herLast) parts.push('He is answering her last message: "' + clip(herLast, 220) + '"')
+  if (pending.length >= 2) {
+    parts.push('He sent ' + pending.length + ' messages in a row since her last reply. She answers them as one thought: ' +
+      pending.map(p => '"' + clip(p, 160) + '"').join(' | '))
+  }
+  if (herLines.length) {
+    const voice = describeVoice(herLines)
+    parts.push('HER VOICE SO FAR (her own earlier messages, for voice only, never copy their wording): ' +
+      herLines.slice(-3).map(t => '"' + clip(t, 140) + '"').join(' | '))
+    if (voice) parts.push('Her habits: ' + voice + '.')
+  }
+  parts.push(
+    '',
+    'CONTINUITY - CHECK THIS LAST, BEFORE WRITING:',
+    '1. Every reply is the natural NEXT TURN of this exact conversation. It picks up a specific detail from the thread above, never a topic from nowhere.',
+    '2. If his message is short or vague ("ok", "lol", "yes", "hmm", "haha"), read it as his answer to HER last message and keep that same topic moving. It is not a fresh start and the subject does not change.',
+    '3. Same woman, same voice. Match the warmth, humour, rhythm and habits of her earlier messages. Do not suddenly become more poetic, more intense, more formal or more heated than she has been so far. Move the energy forward by one notch at most.',
+    '4. Answer what he asked before asking anything new. The closing question grows out of what is being discussed right now. If it could be pasted into a different conversation, rewrite it.',
+    '5. Never restate or quote his words back to him. Move the thread forward.',
+    '6. Use only facts that appear in the thread. Never invent details about him or about earlier messages.',
+  )
+  return parts.join('\n')
 }
 
 // ═══ MATCH HIS ENERGY: length tiers ═════════════════════════════════════════════
@@ -519,7 +607,8 @@ function buildPrompt(
   questionsToAnswer: string[] = [],
   clientType: string | null = null,
   localContext: string = '',
-  tier: LengthTier = LENGTH_TIERS.medium
+  tier: LengthTier = LENGTH_TIERS.medium,
+  thread: string = ''
 ): string {
   const eng: Record<string, string> = {
     AmEng: 'American English. Spelling: color, favorite, realize. Idioms: awesome, sure thing, totally.',
@@ -895,6 +984,8 @@ After answering — her CTA must grow directly from ONE of his questions, going 
       ? 'TONE BIAS (soft preference only - grief/vulnerable/erotic/meetup/contact rules above always take priority over this): ' + CLIENT_TYPE_HINTS[clientType]
       : '',
     '',
+    thread,
+    '',
     'Return ONLY valid JSON - no markdown, no explanation:',
     jsonInstruction,
   ].filter(Boolean).join('\n')
@@ -1000,8 +1091,8 @@ export async function POST(req: Request) {
     // Keep more context — prioritise recent messages, they matter most
     const fullContext = (pageContext.conversationSummary || '').toString()
     // If over limit, keep the end (most recent) not the beginning
-    const context = fullContext.length > 3500
-      ? '...[earlier messages]...\n' + fullContext.slice(-3200)
+    const context = fullContext.length > 6000
+      ? '...[earlier messages]...\n' + fullContext.slice(-5600)
       : fullContext
     const questionsToAnswer: string[] = Array.isArray(pageContext.questionsToAnswer) ? pageContext.questionsToAnswer as string[] : []
     const previousTones = Array.isArray(body.previousTones) ? body.previousTones : []
@@ -1043,7 +1134,7 @@ export async function POST(req: Request) {
     let localContext = ''
     try { localContext = await getLocalContext(context, message) } catch { /* local context is optional */ }
     const tier = getLengthTier(message)
-    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier)
+    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier, buildThreadBlock(context))
     const cleanLLM = (t: string) => t
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
