@@ -1,4 +1,4 @@
-// CIC generate route v11.6.0 - Updated models August 2026
+// CIC generate route v11.7.0 - Updated models August 2026
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createGroq } from '@ai-sdk/groq'
@@ -24,7 +24,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v11.6.0'
+    version: 'v11.7.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -213,7 +213,7 @@ function normalizeReply(r: any): { tone: string; text: string } {
   const tone = ((r && r.tone) || 'Reply').toString()
   if (r && typeof r.text === 'string' && r.text.trim()) return { tone, text: r.text }
   const body = ((r && r.body) || '').toString().trim()
-  const q = ((r && (r.question || r.cta)) || '').toString().trim()
+  const q = ((r && (r.question || r.cta || r.closing)) || '').toString().trim()
   if (!body && !q) return { tone, text: '' }
   const lead = body && !/[.!?…"']$/.test(body) ? body + '.' : body
   return { tone, text: [lead, q].filter(Boolean).join(' ') }
@@ -324,7 +324,7 @@ function parseHistory(context: string): HistLine[] {
 }
 
 function clip(t: string, n: number): string {
-  return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t
+  return t.length > n ? t.slice(0, n - 1).trimEnd() : t
 }
 
 function describeVoice(herLines: string[]): string {
@@ -333,17 +333,15 @@ function describeVoice(herLines: string[]): string {
   const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u
   const usesEmoji = sample.some(t => emoji.test(t))
   const exclaim = sample.filter(t => t.includes('!')).length
-  const ellipsis = sample.some(t => /\.\.\.|…/.test(t))
   const asks = sample.filter(t => t.includes('?')).length
   return [
     usesEmoji ? 'she has used emojis, so one is fine if it fits' : 'she has not used emojis, so use none',
     exclaim >= 2 ? 'she often uses exclamation marks' : 'she rarely uses exclamation marks',
-    ellipsis ? 'she sometimes trails off with "..."' : '',
     asks >= sample.length - 1 ? 'she usually ends with a question' : '',
   ].filter(Boolean).join('; ')
 }
 
-function buildThreadBlock(context: string): string {
+function buildThreadBlock(context: string, noQuestion: boolean = false): string {
   const hist = parseHistory(context)
   if (!hist.length) {
     return [
@@ -386,7 +384,9 @@ function buildThreadBlock(context: string): string {
     '1. Every reply is the natural NEXT TURN of this exact conversation. It picks up a specific detail from the thread above, never a topic from nowhere.',
     '2. If his message is short or vague ("ok", "lol", "yes", "hmm", "haha"), read it as his answer to HER last message and keep that same topic moving. It is not a fresh start and the subject does not change.',
     '3. Same woman, same voice. Match the warmth, humour, rhythm and habits of her earlier messages. Do not suddenly become more poetic, more intense, more formal or more heated than she has been so far. Move the energy forward by one notch at most.',
-    '4. Answer what he asked before asking anything new. The closing question grows out of what is being discussed right now. If it could be pasted into a different conversation, rewrite it.',
+    noQuestion
+      ? '4. He has just said she asks too many questions. Own it lightly in a few words, answer what he said, then close with a statement call to action that is NOT a question (see NO-QUESTION MODE). It grows out of what is being discussed right now.'
+      : '4. Answer what he asked before asking anything new. The closing question grows out of what is being discussed right now. If it could be pasted into a different conversation, rewrite it.',
     '5. Never restate or quote his words back to him. Move the thread forward.',
     '6. Use only facts that appear in the thread. Never invent details about him or about earlier messages.',
   )
@@ -401,6 +401,12 @@ const LENGTH_TIERS: Record<string, LengthTier> = {
   medium: { name: 'medium', min: 80, max: 190, note: 'He wrote a normal-length message. She replies in two or three sentences of reaction, then the question.' },
   long: { name: 'long', min: 110, max: 260, note: 'He wrote a lot, so she gives it real attention: three or four sentences that pick up specific details he shared, then the question.' },
   sensitive: { name: 'sensitive', min: 100, max: 260, note: 'This is an important moment in the chat, so she takes the room she needs to handle it well, and still finishes with the one closing question.' },
+}
+
+// When he complains about being asked too many questions, the closing call to action must NOT be a question.
+function detectQuestionFatigue(context: string, message: string): boolean {
+  const recent = [...getHisLines(context).slice(-2), message].filter(Boolean).join(' \n ')
+  return /(so|too|way too|many|all (these|the)|with the|stop (with )?the|enough|quit|no more) ?(many )?questions|questions? (questions?|again|already|all the time|all day)|(20|twenty) questions|(an? )?interview|interrogat|stop asking|quit asking|(you|u) ask (so|too|a lot)|always asking|keep asking|asking (me )?(so|too|a lot|lots)|(you|u) (ask|asking) (a lot|lots)|why (so|are you asking)|what'?s with (all )?the questions/i.test(recent)
 }
 
 function getLengthTier(message: string): LengthTier {
@@ -608,7 +614,8 @@ function buildPrompt(
   clientType: string | null = null,
   localContext: string = '',
   tier: LengthTier = LENGTH_TIERS.medium,
-  thread: string = ''
+  thread: string = '',
+  noQuestion: boolean = false
 ): string {
   const eng: Record<string, string> = {
     AmEng: 'American English. Spelling: color, favorite, realize. Idioms: awesome, sure thing, totally.',
@@ -797,7 +804,9 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     ? `REGENERATION - tones already shown, pick completely different ones AND completely different angles. Different energy, different emotional register, different first word: ${previousTones.join(', ')}`
     : ''
 
-  const jsonInstruction = '{"replies":[{"tone":"Tone1","body":"short reaction to him","question":"closing question ending with ?"},{"tone":"Tone2","body":"...","question":"..."},{"tone":"Tone3","body":"...","question":"..."},{"tone":"Tone4","body":"...","question":"..."}]}'
+  const jsonInstruction = noQuestion
+    ? '{"replies":[{"tone":"Tone1","body":"short reaction to him","cta":"closing call to action, a statement, no question mark"},{"tone":"Tone2","body":"...","cta":"..."},{"tone":"Tone3","body":"...","cta":"..."},{"tone":"Tone4","body":"...","cta":"..."}]}'
+    : '{"replies":[{"tone":"Tone1","body":"short reaction to him","question":"closing question ending with ?"},{"tone":"Tone2","body":"...","question":"..."},{"tone":"Tone3","body":"...","question":"..."},{"tone":"Tone4","body":"...","question":"..."}]}'
 
   return [
     'You are writing 4 reply options for a real woman chatting with a man she finds genuinely interesting.',
@@ -852,7 +861,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'When he shares something emotional - she acknowledges it specifically before anything else.',
     "Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't.",
     'Fragments fine. One exclamation max - only if genuinely surprised or delighted.',
-    'No em dashes, ever, in any reply, under any circumstance. No semicolons. Period is decisive. Comma for natural pauses.',
+    'No em dashes, no en dashes and no spaced hyphens used as dashes, ever, in any reply. No semicolons. No ellipses and no "..." anywhere, not even to trail off. Use a period for a full stop and a comma for a natural pause. Real texting is mostly plain full stops and commas.',
     'No asterisks, ever. She never writes *smiles*, *winks*, *laughs*, or any action/emphasis wrapped in asterisks. She never uses asterisks for emphasis on a word either. If she wants to show an action or emotion, she says it in plain words as part of the sentence.',
     'She never sounds like she is trying to be charming. She just is.',
     '',
@@ -975,8 +984,22 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     avoidNote,
     'LENGTH - MATCH HIS ENERGY: ' + tier.note,
     `Each reply (body and question together): minimum ${tier.min} characters, maximum ${tier.max} characters. Count them. Going over ${tier.max} is a failure.`,
+    ...(noQuestion ? [
+      'NO-QUESTION MODE - HE HAS JUST COMPLAINED ABOUT TOO MANY QUESTIONS. THIS OVERRIDES EVERY RULE ABOUT CLOSING QUESTIONS.',
+      'There is NO question mark anywhere in any reply. Not in the body, not in the closing line. Every reply ends with a period or an exclamation mark.',
+      'The body owns it lightly in a few words, with a smile and no grovelling, then reacts to what he actually said.',
+      'The closing line is still a strong call to action, written as a statement he feels pulled to answer. Put it in the "cta" field. Use a different mechanic in each reply:',
+      '(a) A playful dare tied to what he said: "I dare you to tell me the real story behind the boat, not the polished one."',
+      '(b) A trade: "I will tell you my most embarrassing Sunday habit if you tell me yours."',
+      '(c) A bold guess he will want to correct: "I bet you are the type who says he hates mornings and then is up first."',
+      '(d) A finish-the-sentence prompt: "Finish this for me: the best part of my week is ___, and no cheating." (still ends with a period).',
+      '(e) An open loop she will pay off if he responds: "I have a theory about men who cook at midnight and I am only telling you if you ask for it."',
+      'These are shape examples only. Never reuse their wording. Each one must name something specific from his messages, give him something fun to react to, and be impossible to answer with one word.',
+      'Never write an imperative that is only a polite request for information, like "Tell me about your day." That is a question in disguise.',
+    ] : [
     'EVERY REPLY ENDS WITH ONE CLOSING QUESTION. This is the call to action and it is non-negotiable. Put it in the "question" field. It always ends with a question mark. Never end on a statement, an ellipsis or a trailing thought. Open loops and teasers go inside the question itself. If a reply is running long, shorten the body, never the question. A reply with no closing question is a failed reply.',
     'The "body" is a short reaction to what he said. It never contains a question. The "question" is the one strong question he cannot answer in one word. A bare question with no body is too weak.',
+    ]),
     '',
     'ORDER: Most irresistible and human reply first.',
     'TONES - pick 4 from: ' + (sexualAllowed ? 'Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy, Naughty' : 'Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable (NEVER Spicy or Naughty in this chat)'),
@@ -995,7 +1018,15 @@ function isCompleteSentence(text: string): boolean {
   return /[.?!]["']?\s*$/.test(text.trim())
 }
 
-function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long): Array<{tone: string, text: string}> {
+// Like splitClosing, but for no-question mode: the closing call to action is the last sentence.
+function splitLastSentence(text: string): { lead: string; closing: string } | null {
+  const t = text.trim()
+  const m = t.match(/^([\s\S]*[.!]["')\]]?\s+)([^.!]+[.!]["')\]]?)$/)
+  if (!m) return null
+  return { lead: m[1].trim(), closing: m[2].trim() }
+}
+
+function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false): Array<{tone: string, text: string}> {
   return replies.map((r) => {
     let text = (r.text || '').trim()
 
@@ -1008,7 +1039,13 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // Em dash becomes a period when followed by a capital letter (it was doing the
     // job of a sentence break), otherwise a comma (it was doing the job of a pause).
     text = text.replace(/\s*—\s*/g, (match, offset) => (/[A-Z]/.test(text.charAt(offset + match.length)) ? '. ' : ', '))
-    text = text.replace(/,\s*([.!?])/g, '$1').replace(/\s{2,}/g, ' ').trim()
+    // En dashes and hyphens used as dashes (" - ", "--") read the same as em dashes, so they get the same treatment.
+    text = text.replace(/\s*(?:–|--+)\s*|\s+-\s+/g, (match, offset) => (/[A-Z]/.test(text.charAt(offset + match.length)) ? '. ' : ', '))
+    // Ellipses: dropped after ? or !, otherwise a plain full stop. Looks less like AI padding.
+    text = text.replace(/([?!])\s*(?:\.{2,}|…)/g, '$1')
+    text = text.replace(/\s*(?:\.{2,}|…)\s*/g, (match, offset) => (offset + match.length >= text.length ? '.' : '. '))
+    text = text.replace(/,\s*([.!?])/g, '$1').replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim()
+    text = text.replace(/([.!?]\s+)([a-z])/g, (_m, a, b) => a + b.toUpperCase())
 
     const isNaughty = /naughty|spicy/i.test(r.tone || '')
     if (!isNaughty) {
@@ -1040,7 +1077,7 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
 
     // Too long: shorten the lead sentence(s) and always keep the closing question intact.
     if (text.length > tier.max) {
-      const parts = splitClosing(text)
+      const parts = noQuestion ? splitLastSentence(text) : splitClosing(text)
       const empty = { tone: r.tone || 'Reply', text: '' }
       if (!parts || !parts.lead) return empty
       const room = tier.max - parts.closing.length - 1
@@ -1065,7 +1102,7 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // (and topped up by the retry in POST) instead of padded with identical stock sentences.
 
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length >= tier.min && r.text.length <= tier.max && endsWithQuestion(r.text) && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
+  }).filter(r => r.text.length >= tier.min && r.text.length <= tier.max && (noQuestion ? (!r.text.includes('?') && /[.!]["')\]]?$/.test(r.text)) : endsWithQuestion(r.text)) && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
 }
 
 // Detects a specific, mechanical signature of a word having been silently dropped
@@ -1074,7 +1111,7 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
 // space directly before terminal punctuation, so "actually ?" or "hard ." is a
 // reliable tell regardless of topic. This is a pure grammar check, not a content
 // filter — it fires the same way on any topic. Deliberately does NOT flag "..." since
-// the prompt elsewhere calls for trailing-off ellipses as an intentional CTA device.
+// ellipses are cleaned out earlier in postProcess.
 function hasDroppedWordArtifact(text: string): boolean {
   const spaceBeforePeriod = /\s\.(?!\.)/.test(text) // excludes " ..." (spaced ellipsis)
   const spaceBeforeOther = /\s[?!,]/.test(text)
@@ -1134,7 +1171,8 @@ export async function POST(req: Request) {
     let localContext = ''
     try { localContext = await getLocalContext(context, message) } catch { /* local context is optional */ }
     const tier = getLengthTier(message)
-    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier, buildThreadBlock(context))
+    const noQuestion = detectQuestionFatigue(context, message)
+    const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier, buildThreadBlock(context, noQuestion), noQuestion)
     const cleanLLM = (t: string) => t
       .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
@@ -1146,7 +1184,7 @@ export async function POST(req: Request) {
     const deadline = reqStart + 45000
     const first = await generate(prompt, { sexual: sexualRoute, deadline })
     // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
-    let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext, tier)
+    let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext, tier, noQuestion)
 
     // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
     // with ONE retry. If the first provider was Anthropic, the retry skips it.
@@ -1158,7 +1196,7 @@ export async function POST(req: Request) {
           deadline,
           avoid: first.model.startsWith('anthropic') ? ['anthropic'] : [],
         })
-        const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext, tier)
+        const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext, tier, noQuestion)
         const existingTexts = new Set(finalReplies.map(r => r.text))
         for (const r of retryReplies) {
           if (finalReplies.length >= 4) break
