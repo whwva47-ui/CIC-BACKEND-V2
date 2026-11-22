@@ -1,4 +1,4 @@
-// CIC generate route v12.3.0 - speed rebuild
+// CIC generate route v12.4.0 - speed rebuild
 import { NextResponse } from 'next/server'
 
 function cors() {
@@ -22,7 +22,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v12.3.0'
+    version: 'v12.4.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -32,6 +32,24 @@ type GenResult = { text: string; model: string }
 // Staggered race: the first model starts at once. If it has not answered after `staggerMs`, the next
 // model starts in parallel (and starts immediately if the first one fails). The first valid answer
 // wins and the rest are cancelled. A slow or rate-limited model no longer holds up the whole reply.
+// Strips reasoning blocks some models leak into their output.
+function cleanLLM(t: string): string {
+  return (t || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
+    .replace(/\[REASONING\][\s\S]*?\[\/REASONING\]/gi, '')
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+    .trim()
+}
+
+// A model that answers with a refusal, an empty set or cut-off JSON has not answered. Treating that as a
+// failure lets the next model start at once, instead of the operator getting an error.
+function requireReadable(text: string): string {
+  const got = parseReplies(cleanLLM(text)).filter(r => (r.text || '').length >= 40)
+  if (!got.length) throw new Error('unreadable output')
+  return text
+}
+
 type RaceTask = { label: string; run: (signal: AbortSignal) => Promise<string>; staggerMs?: number }
 
 function raceStaggered(tasks: RaceTask[], staggerMs: number, capMs: number, errors: string[]): Promise<GenResult | null> {
@@ -148,7 +166,7 @@ async function generate(
   const claudeTask: RaceTask = {
     label: 'anthropic/' + claudeModel,
     staggerMs: 6000,
-    run: (signal: AbortSignal) => callAnthropic(claudeModel, anthropicKey || '', prompt, signal).then(stripThink),
+    run: (signal: AbortSignal) => callAnthropic(claudeModel, anthropicKey || '', prompt, signal).then(stripThink).then(requireReadable),
   }
   if (useClaude && claudeFirst) tasks.push(claudeTask)
   if (groqKey && !avoid.has('groq')) {
@@ -171,7 +189,7 @@ async function generate(
     for (const m of groqModels) {
       tasks.push({
         label: 'groq/' + m,
-        run: (signal: AbortSignal) => callGroq(m, groqKey || '', prompt, signal, effort).then(stripThink),
+        run: (signal: AbortSignal) => callGroq(m, groqKey || '', prompt, signal, effort).then(stripThink).then(requireReadable),
       })
     }
   }
@@ -1138,7 +1156,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '',
     avoidNote,
     'LENGTH - MATCH HIS ENERGY: ' + tier.note,
-    `Each reply (body and question together): minimum ${tier.min} characters, aim for ${tier.max} characters or fewer. Stay at or under ${tier.max} whenever the reply can still be complete and make sense. Go past it only when it is truly necessary, for example to explain something he did not understand, to answer several of his points, or to handle a heavy moment, and then only by as much as needed. Never cut a thought short just to hit the number, and never stop mid-sentence.`,
+    `Each reply (body and question together): minimum ${tier.min + 8} characters (the platform rejects anything under ${tier.min}, so never go below it), aim for ${tier.max} characters or fewer. Stay at or under ${tier.max} whenever the reply can still be complete and make sense. Go past it only when it is truly necessary, for example to explain something he did not understand, to answer several of his points, or to handle a heavy moment, and then only by as much as needed. Never cut a thought short just to hit the number, and never stop mid-sentence.`,
     ...(sleepy ? [
       'SLEEP MODE - HE IS GOING TO SLEEP OR IS TIRED. Tone the conversation down instead of advancing it, as set out in the SLEEP MODE block at the end of this prompt. Put the gentle closing hook in the "cta" field. It may be a light statement or a soft easy question.',
     ] : noQuestion ? [
@@ -1199,7 +1217,7 @@ function hasBrokenSyntax(text: string): boolean {
   if (/\bto\s+(you|i|we|they)\s+(want|need|would|are|were|have|had|do|did|can|could|will|am)\b/i.test(t)) return true
   // A short fragment sentence that is just a subject + verb with nothing after, followed by a capital word:
   // "Ordering photos feels. Formal"
-  if (/(^|[.!?]\s)(\w+\s){1,3}(feels?|seems?|looks?|sounds?|is|are|was|were|has|have|had)\.\s+[A-Z]/.test(t)) return true
+  if (/(^|[.!?]\s)(\w+\s){1,3}(feels?|seems?|looks?|sounds?)\.\s+[A-Z]/.test(t)) return true
   return false
 }
 
@@ -1381,18 +1399,13 @@ export async function POST(req: Request) {
     const needsRoom = !sleepy && (detectConfusion(message) || detectCareFirst(message) || detectOrderTopic(context, message) || tier.name === 'sensitive')
     const noQuestion = !sleepy && detectQuestionFatigue(context, message)
     const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier, buildThreadBlock(context, noQuestion, sleepy, message), noQuestion, sleepy)
-    const cleanLLM = (t: string) => t
-      .replace(/<think>[\s\S]*?<\/think>/gi, '')
-      .replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '')
-      .replace(/\[REASONING\][\s\S]*?\[\/REASONING\]/gi, '')
-      .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
-      .trim()
 
     // Vercel kills the function at maxDuration (60s). Stop trying well before that.
     const deadline = reqStart + 45000
     const first = await generate(prompt, { sexual: sexualRoute, deadline })
     // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
     const parsedFirst = parseReplies(cleanLLM(first.text))
+    const allParsed = [...parsedFirst]
     let finalReplies = postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, false, needsRoom)
     // Strict pass first (wants the closing question). If that leaves fewer than 3, a relaxed pass keeps any
     // complete, well-formed reply instead of throwing it away and paying for a second AI call.
@@ -1409,6 +1422,7 @@ export async function POST(req: Request) {
           avoid: first.model.startsWith('anthropic') ? ['anthropic'] : [],
         })
         const parsedRetry = parseReplies(cleanLLM(retry.text))
+        allParsed.push(...parsedRetry)
         mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, false, needsRoom))
         if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, true, needsRoom))
       } catch {
@@ -1416,19 +1430,29 @@ export async function POST(req: Request) {
       }
     }
 
+    // Last resort before an error: accept well-formed replies even if they are a little under the minimum,
+    // and tell the operator to add a few words. A usable draft beats an error.
+    let shortNote = ''
     if (!finalReplies.length) {
+      const lowTier = { ...tier, min: 45 }
+      mergeUnique(finalReplies, postProcess(allParsed, isMeetupContext, lowTier, noQuestion, sleepy, true, true))
+      if (finalReplies.some(r => r.text.length < tier.min)) shortNote = ` The platform needs at least ${tier.min} characters, so add a few words to any short reply before you send.`
+    }
+
+    if (!finalReplies.length) {
+      const diag = diagnoseDrops(allParsed, tier)
       console.error('[CIC] Empty result:', JSON.stringify({
         drops: diagnoseDrops(parsedFirst, tier), rawStart: String(first.text || '').slice(0, 160), tier: tier.name, noQuestion, sleepy, sexualRoute,
         model: first.model, ms: Date.now() - reqStart,
       }))
-      return NextResponse.json({ error: 'Could not produce a clean set of replies. Tap Generate again.', replies: [], remaining: 999 }, { status: 200, headers })
+      return NextResponse.json({ error: 'Could not produce a clean set of replies. Tap Generate again. [' + first.model + ' ' + diag + ']', replies: [], remaining: 999 }, { status: 200, headers })
     }
 
     const elapsedMs = Date.now() - reqStart
     console.log('[CIC] Done in', elapsedMs, 'ms |', first.model, '|', finalReplies.length, 'replies | tier', tier.name, '| sexual', sexualRoute, '| noQ', noQuestion, '| sleepy', sleepy)
     const notice = detectOrderTopic(context, message)
-      ? 'He mentions an order, payment or something he is waiting for. Check the order log on the platform and answer him honestly before you send anything.'
-      : ''
+      ? 'He mentions an order, payment or something he is waiting for. Check the order log on the platform and answer him honestly before you send anything.' + shortNote
+      : shortNote.trim()
     return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: first.model, elapsedMs, notice }, { headers })
 
   } catch (error: any) {
