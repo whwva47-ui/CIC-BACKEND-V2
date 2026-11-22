@@ -1,4 +1,4 @@
-// CIC generate route v12.2.0 - speed rebuild
+// CIC generate route v12.3.0 - speed rebuild
 import { NextResponse } from 'next/server'
 
 function cors() {
@@ -22,7 +22,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v12.2.0'
+    version: 'v12.3.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -525,10 +525,10 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
 // The 75 character floor stays. Short messages get short replies, long messages get fuller ones.
 type LengthTier = { name: string; min: number; max: number; note: string }
 const LENGTH_TIERS: Record<string, LengthTier> = {
-  short: { name: 'short', min: 75, max: 200, note: 'He wrote very little. She keeps it light and quick: one or two short sentences of real reaction, then the question. Still warm, still specific to him.' },
-  medium: { name: 'medium', min: 80, max: 300, note: 'He wrote a normal-length message. She replies in two to four sentences that cover what he said and add something of her own, then the question.' },
-  long: { name: 'long', min: 110, max: 430, note: 'He wrote a lot, so she gives it real attention: three to five sentences that respond to each thing he shared, in his order, with specific details, then the question.' },
-  sensitive: { name: 'sensitive', min: 100, max: 430, note: 'This is an important moment in the chat, so she takes the room she needs to handle it well, and still finishes with the one closing question.' },
+  short: { name: 'short', min: 75, max: 90, note: 'He wrote very little. She keeps it tight: one short, warm sentence that reacts to something specific, then the closing question, all in a line or two.' },
+  medium: { name: 'medium', min: 80, max: 180, note: 'He wrote a normal-length message. She replies in about two sentences that cover what he said, then the closing question.' },
+  long: { name: 'long', min: 110, max: 250, note: 'He wrote a lot. She answers each thing he shared compactly, in his order, with a specific detail or reaction for each, then the closing question.' },
+  sensitive: { name: 'sensitive', min: 100, max: 250, note: 'This is an important moment in the chat. She handles it carefully and plainly, and still finishes with the one closing question.' },
 }
 
 // He is winding down for the night: the reply should tone the conversation down, not push it forward.
@@ -1138,7 +1138,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '',
     avoidNote,
     'LENGTH - MATCH HIS ENERGY: ' + tier.note,
-    `Each reply (body and question together): minimum ${tier.min} characters, maximum ${tier.max} characters. Aim to stay inside that range. A reply that runs far over is thrown away, so finish the thought cleanly instead.`,
+    `Each reply (body and question together): minimum ${tier.min} characters, aim for ${tier.max} characters or fewer. Stay at or under ${tier.max} whenever the reply can still be complete and make sense. Go past it only when it is truly necessary, for example to explain something he did not understand, to answer several of his points, or to handle a heavy moment, and then only by as much as needed. Never cut a thought short just to hit the number, and never stop mid-sentence.`,
     ...(sleepy ? [
       'SLEEP MODE - HE IS GOING TO SLEEP OR IS TIRED. Tone the conversation down instead of advancing it, as set out in the SLEEP MODE block at the end of this prompt. Put the gentle closing hook in the "cta" field. It may be a light statement or a soft easy question.',
     ] : noQuestion ? [
@@ -1203,8 +1203,14 @@ function hasBrokenSyntax(text: string): boolean {
   return false
 }
 
-function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false, relax: boolean = false): Array<{tone: string, text: string}> {
-  const capMax = Math.round(tier.max * (relax ? 1.7 : 1.15))
+function lengthCap(tier: LengthTier, relax: boolean, roomy: boolean): number {
+  return Math.round(tier.max * (relax ? 2.1 : roomy ? 1.9 : 1.45))
+}
+
+function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false, relax: boolean = false, roomy: boolean = false): Array<{tone: string, text: string}> {
+  // The tier maximum is the target. Going past it is allowed when the chat truly needs the room
+  // (explaining, several points to answer, a heavy moment), and in the relaxed pass. Beyond that, a reply is dropped.
+  const capMax = lengthCap(tier, relax, roomy)
   return replies.map((r) => {
     let text = (r.text || '').trim()
 
@@ -1299,7 +1305,7 @@ function diagnoseDrops(parsed: Array<{tone: string, text: string}>, tier: Length
   for (const r of parsed) {
     const t = (r.text || '').trim()
     if (t.length < tier.min) c.short++
-    if (t.length > Math.round(tier.max * 1.15)) c.long++
+    if (t.length > lengthCap(tier, false, false)) c.long++
     if (!endsWithQuestion(t)) c.noQuestion++
     if (hasBrokenSyntax(t)) c.broken++
     if (hasDroppedWordArtifact(t)) c.artifact++
@@ -1371,6 +1377,8 @@ export async function POST(req: Request) {
     // An explanation needs room, so a short confused message does not get a one-liner.
     if (detectConfusion(message) && tier.name === 'short') tier = LENGTH_TIERS.medium
     const sleepy = detectSleepy(context, message)
+    // Moments that genuinely need more than the usual number of characters.
+    const needsRoom = !sleepy && (detectConfusion(message) || detectCareFirst(message) || detectOrderTopic(context, message) || tier.name === 'sensitive')
     const noQuestion = !sleepy && detectQuestionFatigue(context, message)
     const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier, buildThreadBlock(context, noQuestion, sleepy, message), noQuestion, sleepy)
     const cleanLLM = (t: string) => t
@@ -1385,10 +1393,10 @@ export async function POST(req: Request) {
     const first = await generate(prompt, { sexual: sexualRoute, deadline })
     // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
     const parsedFirst = parseReplies(cleanLLM(first.text))
-    let finalReplies = postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy)
+    let finalReplies = postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, false, needsRoom)
     // Strict pass first (wants the closing question). If that leaves fewer than 3, a relaxed pass keeps any
     // complete, well-formed reply instead of throwing it away and paying for a second AI call.
-    if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, true))
+    if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, true, needsRoom))
 
     // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
     // with ONE retry. If the first provider was Anthropic, the retry skips it.
@@ -1401,8 +1409,8 @@ export async function POST(req: Request) {
           avoid: first.model.startsWith('anthropic') ? ['anthropic'] : [],
         })
         const parsedRetry = parseReplies(cleanLLM(retry.text))
-        mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy))
-        if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, true))
+        mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, false, needsRoom))
+        if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, true, needsRoom))
       } catch {
         // Retry failed — proceed with whatever clean replies survived the first pass.
       }
