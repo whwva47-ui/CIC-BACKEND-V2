@@ -1,4 +1,4 @@
-// CIC generate route v12.1.0 - speed rebuild
+// CIC generate route v12.2.0 - speed rebuild
 import { NextResponse } from 'next/server'
 
 function cors() {
@@ -22,7 +22,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v12.1.0'
+    version: 'v12.2.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -98,7 +98,7 @@ async function callGroq(model: string, key: string, prompt: string, signal: Abor
     model,
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.9,
-    max_completion_tokens: isOss ? 1500 : 900,
+    max_completion_tokens: isOss ? 4000 : 1200,
   }
   const rich = { ...base, response_format: { type: 'json_object' }, ...(isOss ? { reasoning_effort: effort, include_reasoning: false } : {}) }
   const post = (body: Record<string, unknown>) => fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -402,6 +402,11 @@ function describeVoice(herLines: string[]): string {
 
 // He mentions something he ordered, paid for, was promised or is waiting on. Such a message must be
 // met plainly and honestly. It is never joked away or stalled, and the operator is told to check.
+// He says he did not understand something she wrote. She must explain it simply, then carry on.
+function detectConfusion(message: string): boolean {
+  return /\b(what do you mean|what did you mean|what you mean|what does that mean|what is that supposed to mean|don'?t (know|understand|get) what you mean|do not (know|understand) what you mean|(i )?(don'?t|do not|didn'?t|did not) (understand|get|follow)|(i'?m|i am|im) (confused|lost)|confus(ed|ing)|makes? no sense|doesn'?t make sense|not sure what you mean|explain (that|what|it)|come again|huh\b|what\?+$|meaning\?)/i.test(message)
+}
+
 function detectOrderTopic(context: string, message: string): boolean {
   const recent = [...getHisLines(context).slice(-1), message].filter(Boolean).join(' \n ')
   return /\b(my order|an order|the order|put in an order|placed an order|ordered|custom (photo|pic|video|content|request)s?|special (photo|pic|video)s?|i paid|already paid|payment|purchased?|bought|invoice|refund|tipped|you promised|you said you would|you owe|still waiting|haven'?t (got|received|gotten)|didn'?t (get|receive)|where (is|are) (my|the)|send (them|it|those) to me)\b/i.test(recent)
@@ -477,6 +482,16 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
     '7. THE REAL THREAD BEATS THE PERSONA. The description of Mia at the top is only a default. If her earlier messages in this chat are plain, earnest, formal, shy or bold, write in THAT register, with her sentence length, warmth and vocabulary. Be witty only if she has been, or he is. Never swap her for a different woman.',
     '8. READ EACH REPLY BACK BEFORE ANSWERING. Every sentence is complete, no word is missing, nothing stops mid-thought, no sentence is a stranded fragment, and the reply makes sense on its own and as the next turn of this chat.',
   )
+  if (detectConfusion(latest)) {
+    parts.push(
+      '',
+      'HE DID NOT UNDERSTAND SOMETHING SHE SAID. EXPLAINING IT COMES FIRST:',
+      herLast ? 'The message he is confused about is HER LAST MESSAGE: "' + clip(herLast, 500) + '"' : 'He is confused about something she said earlier in the thread above.',
+      'Start by explaining what she meant, in plain everyday words and short sentences, as if telling a friend. Use one simple concrete example or a clearer restatement of her own point. Stay consistent with what she already said and do not invent a different story.',
+      'Answer his exact confusion: if he quotes a phrase, explain that phrase. Do not repeat her original wording, do not apologise at length, and do not make him feel slow. A light, warm "that came out wordy, let me say it simply" is fine, once.',
+      'Then keep the conversation moving on the same topic with a closing call to action that is EASIER to answer than the last one: simple, concrete and personal, not abstract.'
+    )
+  }
   if (detectCareFirst(latest)) {
     parts.push(
       '',
@@ -510,10 +525,10 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
 // The 75 character floor stays. Short messages get short replies, long messages get fuller ones.
 type LengthTier = { name: string; min: number; max: number; note: string }
 const LENGTH_TIERS: Record<string, LengthTier> = {
-  short: { name: 'short', min: 75, max: 160, note: 'He wrote very little. She keeps it light and quick: one or two short sentences of real reaction, then the question. Still warm, still specific to him.' },
-  medium: { name: 'medium', min: 80, max: 270, note: 'He wrote a normal-length message. She replies in two to four sentences that cover what he said and add something of her own, then the question.' },
-  long: { name: 'long', min: 110, max: 390, note: 'He wrote a lot, so she gives it real attention: three to five sentences that respond to each thing he shared, in his order, with specific details, then the question.' },
-  sensitive: { name: 'sensitive', min: 100, max: 390, note: 'This is an important moment in the chat, so she takes the room she needs to handle it well, and still finishes with the one closing question.' },
+  short: { name: 'short', min: 75, max: 200, note: 'He wrote very little. She keeps it light and quick: one or two short sentences of real reaction, then the question. Still warm, still specific to him.' },
+  medium: { name: 'medium', min: 80, max: 300, note: 'He wrote a normal-length message. She replies in two to four sentences that cover what he said and add something of her own, then the question.' },
+  long: { name: 'long', min: 110, max: 430, note: 'He wrote a lot, so she gives it real attention: three to five sentences that respond to each thing he shared, in his order, with specific details, then the question.' },
+  sensitive: { name: 'sensitive', min: 100, max: 430, note: 'This is an important moment in the chat, so she takes the room she needs to handle it well, and still finishes with the one closing question.' },
 }
 
 // He is winding down for the night: the reply should tone the conversation down, not push it forward.
@@ -1176,8 +1191,8 @@ function hasBrokenSyntax(text: string): boolean {
   const t = text.trim()
   // Doubled small words: "the the", "and and"
   if (/\b(the|a|an|of|and|but|or|with)\s+\1\b/i.test(t)) return true
-  // A sentence that stops on a word that cannot end one: "...in a picture of?" "...and"
-  if (/\b(the|a|an|of|to|and|but|or|with|your|my|his|her|their|our|that|this|these|those|than|if|so)\s*[.!?]["')\]]?(\s|$)/i.test(t)) return true
+  // A sentence that stops on a word that cannot end one: "...in a picture of?" "...and". Words that can end a real question ("to", "with", "that", "so") are not on this list.
+  if (/\b(the|a|an|of|and|but|your|my|our|their)\s*[.!?]["')\]]?(\s|$)/i.test(t)) return true
   // Article followed directly by a pronoun and verb: "describe the you want", "a I would"
   if (/\b(the|a|an)\s+(you|i|we|they|he|she)\s+(want|wanna|need|would|are|were|have|had|do|did|can|could|will|am)\b/i.test(t)) return true
   // "to" followed by a conjugated verb pronoun pair, e.g. "to you want"
@@ -1188,7 +1203,8 @@ function hasBrokenSyntax(text: string): boolean {
   return false
 }
 
-function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false): Array<{tone: string, text: string}> {
+function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false, relax: boolean = false): Array<{tone: string, text: string}> {
+  const capMax = Math.round(tier.max * (relax ? 1.7 : 1.15))
   return replies.map((r) => {
     let text = (r.text || '').trim()
 
@@ -1243,7 +1259,7 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
     // Too long: dropped, never chopped. Cutting sentences out of the middle breaks the sense of a reply.
-    if (text.length > Math.round(tier.max * 1.15)) return { tone: r.tone || 'Reply', text: '' }
+    if (text.length > capMax) return { tone: r.tone || 'Reply', text: '' }
 
     if (!isCompleteSentence(text)) {
       const lp = Math.max(text.lastIndexOf('?'), text.lastIndexOf('.'), text.lastIndexOf('!'))
@@ -1255,7 +1271,13 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // (and topped up by the retry in POST) instead of padded with identical stock sentences.
 
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length >= tier.min && r.text.length <= Math.round(tier.max * 1.15) && !hasBrokenSyntax(r.text) && (sleepy ? /[.!?]["')\]]?$/.test(r.text) : noQuestion ? (!r.text.includes('?') && /[.!]["')\]]?$/.test(r.text)) : endsWithQuestion(r.text)) && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
+  }).filter(r => r.text.length >= tier.min && r.text.length <= capMax && !hasBrokenSyntax(r.text) && !hasDroppedWordArtifact(r.text) && (
+    sleepy ? /[.!?]["')\]]?$/.test(r.text)
+    : noQuestion ? (!r.text.includes('?') && /[.!]["')\]]?$/.test(r.text))
+    // Strict pass wants a closing question. The relaxed pass takes any complete reply, so a good one is never thrown away.
+    : relax ? /[.!?]["')\]]?$/.test(r.text)
+    : (endsWithQuestion(r.text) && (r.text.match(/\?/g) || []).length <= 2)
+  ))
 }
 
 // Detects a specific, mechanical signature of a word having been silently dropped
@@ -1269,6 +1291,28 @@ function hasDroppedWordArtifact(text: string): boolean {
   const spaceBeforePeriod = /\s\.(?!\.)/.test(text) // excludes " ..." (spaced ellipsis)
   const spaceBeforeOther = /\s[?!,]/.test(text)
   return spaceBeforePeriod || spaceBeforeOther || /,\s*,/.test(text)
+}
+
+// Says why replies were thrown away, so an empty result can be traced in the logs.
+function diagnoseDrops(parsed: Array<{tone: string, text: string}>, tier: LengthTier): string {
+  const c = { parsed: parsed.length, short: 0, long: 0, noQuestion: 0, broken: 0, artifact: 0 }
+  for (const r of parsed) {
+    const t = (r.text || '').trim()
+    if (t.length < tier.min) c.short++
+    if (t.length > Math.round(tier.max * 1.15)) c.long++
+    if (!endsWithQuestion(t)) c.noQuestion++
+    if (hasBrokenSyntax(t)) c.broken++
+    if (hasDroppedWordArtifact(t)) c.artifact++
+  }
+  return JSON.stringify(c)
+}
+
+function mergeUnique(target: Array<{tone: string, text: string}>, extra: Array<{tone: string, text: string}>, max: number = 4) {
+  const seen = new Set(target.map(r => r.text))
+  for (const r of extra) {
+    if (target.length >= max) break
+    if (!seen.has(r.text)) { target.push(r); seen.add(r.text) }
+  }
 }
 
 export async function POST(req: Request) {
@@ -1323,7 +1367,9 @@ export async function POST(req: Request) {
     const sexualRoute = heHasGoneSexual(context, message)
     let localContext = ''
     try { localContext = await getLocalContext(context, message) } catch { /* local context is optional */ }
-    const tier = getLengthTier(message)
+    let tier = getLengthTier(message)
+    // An explanation needs room, so a short confused message does not get a one-liner.
+    if (detectConfusion(message) && tier.name === 'short') tier = LENGTH_TIERS.medium
     const sleepy = detectSleepy(context, message)
     const noQuestion = !sleepy && detectQuestionFatigue(context, message)
     const prompt = buildPrompt(message, context, userPlan, previousTones, englishVariety, myName, questionsToAnswer, clientType, localContext, tier, buildThreadBlock(context, noQuestion, sleepy, message), noQuestion, sleepy)
@@ -1338,24 +1384,25 @@ export async function POST(req: Request) {
     const deadline = reqStart + 45000
     const first = await generate(prompt, { sexual: sexualRoute, deadline })
     // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
-    let finalReplies = postProcess(parseReplies(cleanLLM(first.text)), isMeetupContext, tier, noQuestion, sleepy)
+    const parsedFirst = parseReplies(cleanLLM(first.text))
+    let finalReplies = postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy)
+    // Strict pass first (wants the closing question). If that leaves fewer than 3, a relaxed pass keeps any
+    // complete, well-formed reply instead of throwing it away and paying for a second AI call.
+    if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, true))
 
     // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
     // with ONE retry. If the first provider was Anthropic, the retry skips it.
     // Retry only if we are short AND there is plenty of time left. A slow retry is worse than three good replies.
-    if (finalReplies.length < 3 && deadline - Date.now() > 18000) {
+    if (finalReplies.length < 2 && deadline - Date.now() > 18000) {
       try {
         const retry = await generate(prompt, {
           sexual: sexualRoute,
           deadline,
           avoid: first.model.startsWith('anthropic') ? ['anthropic'] : [],
         })
-        const retryReplies = postProcess(parseReplies(cleanLLM(retry.text)), isMeetupContext, tier, noQuestion, sleepy)
-        const existingTexts = new Set(finalReplies.map(r => r.text))
-        for (const r of retryReplies) {
-          if (finalReplies.length >= 4) break
-          if (!existingTexts.has(r.text)) { finalReplies.push(r); existingTexts.add(r.text) }
-        }
+        const parsedRetry = parseReplies(cleanLLM(retry.text))
+        mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy))
+        if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, true))
       } catch {
         // Retry failed — proceed with whatever clean replies survived the first pass.
       }
@@ -1363,7 +1410,7 @@ export async function POST(req: Request) {
 
     if (!finalReplies.length) {
       console.error('[CIC] Empty result:', JSON.stringify({
-        parsed: parseReplies(cleanLLM(first.text)).length, tier: tier.name, noQuestion, sleepy, sexualRoute,
+        drops: diagnoseDrops(parsedFirst, tier), rawStart: String(first.text || '').slice(0, 160), tier: tier.name, noQuestion, sleepy, sexualRoute,
         model: first.model, ms: Date.now() - reqStart,
       }))
       return NextResponse.json({ error: 'Could not produce a clean set of replies. Tap Generate again.', replies: [], remaining: 999 }, { status: 200, headers })
