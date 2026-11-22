@@ -1,4 +1,4 @@
-// CIC generate route v12.4.0 - speed rebuild
+// CIC generate route v12.5.0 - speed rebuild
 import { NextResponse } from 'next/server'
 
 function cors() {
@@ -22,7 +22,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v12.4.0'
+    version: 'v12.5.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -140,7 +140,7 @@ async function callGroq(model: string, key: string, prompt: string, signal: Abor
 // then Groq (model order depends on message type), OpenRouter, Gemini.
 async function generate(
   prompt: string,
-  opts: { sexual?: boolean; avoid?: string[]; deadline?: number } = {}
+  opts: { sexual?: boolean; avoid?: string[]; deadline?: number; fast?: boolean } = {}
 ): Promise<GenResult> {
   const errors: string[] = []
   const t0 = Date.now()
@@ -161,7 +161,7 @@ async function generate(
   // Set CIC_CLAUDE_BACKUP=1 to flip it (Groq first, Claude as backup) when speed matters more.
   const tasks: RaceTask[] = []
   const claudeModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5'
-  const useClaude = !!anthropicKey && !opts.sexual && !avoid.has('anthropic') && hasTime(12000)
+  const useClaude = !opts.fast && !!anthropicKey && !opts.sexual && !avoid.has('anthropic') && hasTime(12000)
   const claudeFirst = process.env.CIC_CLAUDE_BACKUP !== '1'
   const claudeTask: RaceTask = {
     label: 'anthropic/' + claudeModel,
@@ -172,7 +172,9 @@ async function generate(
   if (groqKey && !avoid.has('groq')) {
     // gpt-oss is the most safety-tuned of these and tends to refuse or silently drop
     // explicit words, so it goes last for sexual messages and first for everything else.
-    const groqModels = opts.sexual
+    const groqModels = opts.fast
+      ? ['llama-3.3-70b-versatile', 'meta-llama/llama-4-maverick-17b-128e-instruct']
+      : opts.sexual
       ? [
           'llama-3.3-70b-versatile',
           'meta-llama/llama-4-maverick-17b-128e-instruct',
@@ -185,7 +187,7 @@ async function generate(
           'openai/gpt-oss-20b',
         ]
     // With Claude in the race, Groq is the quick backup (low reasoning). On its own it thinks a bit more.
-    const effort = process.env.GROQ_REASONING || (useClaude && claudeFirst ? 'low' : 'medium')
+    const effort = opts.fast ? 'low' : (process.env.GROQ_REASONING || (useClaude && claudeFirst ? 'low' : 'medium'))
     for (const m of groqModels) {
       tasks.push({
         label: 'groq/' + m,
@@ -278,14 +280,31 @@ async function generate(
 
 // Replies now arrive as {tone, body, question}. They are joined here so the closing question is
 // always the last thing in the text. The old {tone, text} shape is still accepted.
+const TRAIL_EMOJI = /[\s\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\uFE0F]+$/u
+
+// Puts a closing mark on a sentence that lacks one, in front of any trailing emoji ("honey 😘" becomes "honey. 😘").
+function ensureEndMark(text: string, mark: string, emojiEnds: boolean = false): string {
+  const t = text.trim()
+  const m = t.match(TRAIL_EMOJI)
+  const tail = m ? m[0] : ''
+  const core = tail ? t.slice(0, t.length - tail.length) : t
+  if (!core) return t
+  if (/[.!?…]["')\]]*$/.test(core)) return t
+  // A body that already ends in an emoji ("honey 😘") reads as finished; no full stop is forced in front of it.
+  if (emojiEnds && tail.trim()) return t
+  return core + mark + tail
+}
+
 function normalizeReply(r: any): { tone: string; text: string } {
   const tone = ((r && r.tone) || 'Reply').toString()
   if (r && typeof r.text === 'string' && r.text.trim()) return { tone, text: r.text }
   const body = ((r && r.body) || '').toString().trim()
   const q = ((r && (r.question || r.cta || r.closing)) || '').toString().trim()
   if (!body && !q) return { tone, text: '' }
-  const lead = body && !/[.!?…"']$/.test(body) ? body + '.' : body
-  return { tone, text: [lead, q].filter(Boolean).join(' ') }
+  const lead = body ? ensureEndMark(body, '.', true) : ''
+  // A closing line with no mark at all: a question word or helper verb makes it a question, anything else a statement.
+  const closing = q ? ensureEndMark(q, /^(what|why|how|when|where|who|which|whose|do|does|did|is|are|was|were|will|would|can|could|should|have|has|had|am|ever|if)\b/i.test(q) ? '?' : '.') : ''
+  return { tone, text: [lead, closing].filter(Boolean).join(' ') }
 }
 
 function parseReplies(raw: string): Array<{tone: string, text: string}> {
@@ -541,12 +560,12 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
 
 // ═══ MATCH HIS ENERGY: length tiers ═════════════════════════════════════════════
 // The 75 character floor stays. Short messages get short replies, long messages get fuller ones.
-type LengthTier = { name: string; min: number; max: number; note: string }
+type LengthTier = { name: string; min: number; max: number; note: string; body: string; q: string }
 const LENGTH_TIERS: Record<string, LengthTier> = {
-  short: { name: 'short', min: 75, max: 90, note: 'He wrote very little. She keeps it tight: one short, warm sentence that reacts to something specific, then the closing question, all in a line or two.' },
-  medium: { name: 'medium', min: 80, max: 180, note: 'He wrote a normal-length message. She replies in about two sentences that cover what he said, then the closing question.' },
-  long: { name: 'long', min: 110, max: 250, note: 'He wrote a lot. She answers each thing he shared compactly, in his order, with a specific detail or reaction for each, then the closing question.' },
-  sensitive: { name: 'sensitive', min: 100, max: 250, note: 'This is an important moment in the chat. She handles it carefully and plainly, and still finishes with the one closing question.' },
+  short: { name: 'short', min: 75, max: 90, body: '38 to 45', q: '38 to 45', note: 'He wrote very little. She keeps it tight: one short, warm sentence that reacts to the single most important thing he said, then the closing question.' },
+  medium: { name: 'medium', min: 80, max: 180, body: '80 to 105', q: '50 to 70', note: 'He wrote a normal-length message. She replies in about two sentences that cover what he said, then the closing question.' },
+  long: { name: 'long', min: 110, max: 250, body: '130 to 160', q: '60 to 85', note: 'He wrote a lot. She answers each thing he shared compactly, in his order, with a specific detail or reaction for each, then the closing question.' },
+  sensitive: { name: 'sensitive', min: 100, max: 250, body: '130 to 160', q: '60 to 85', note: 'This is an important moment in the chat. She handles it carefully and plainly, and still finishes with the one closing question.' },
 }
 
 // He is winding down for the night: the reply should tone the conversation down, not push it forward.
@@ -575,7 +594,15 @@ function getLengthTier(message: string): LengthTier {
 }
 
 function endsWithQuestion(t: string): boolean {
-  return /\?["')\]]?\s*$/.test(t.trim())
+  return /\?["')\]]*$/.test(t.trim().replace(TRAIL_EMOJI, ''))
+}
+
+// A call to action is a closing question, or a closing invitation such as "Tell me about ...".
+function hasCTA(t: string): boolean {
+  const core = t.trim().replace(TRAIL_EMOJI, '')
+  if (endsWithQuestion(core)) return true
+  const last = (core.match(/[^.!?]+[.!?]+["')\]]*$/) || [''])[0].trim()
+  return /^(tell me|describe|show me|share|walk me|give me|finish|take me|so tell me)\b/i.test(last)
 }
 
 // Splits "lead + closing question" so trimming can shorten the lead and never the question.
@@ -775,6 +802,24 @@ const BODY_QUALITY = [
   'Before writing each reply, check the body: could a different woman send it to a different man? If yes, rewrite it with something only he gave her.',
 ].join('\n')
 
+
+function lengthBudgetBlock(tier: LengthTier, noQuestion: boolean, sleepy: boolean): string {
+  const qField = noQuestion ? 'cta' : 'question'
+  const lines = [
+    'LENGTH BUDGET - THIS DECIDES THE SIZE OF EVERY REPLY AND WINS OVER ANY RULE ABOVE THAT SEEMS TO NEED MORE ROOM:',
+    tier.note,
+    `"body": ${tier.body} characters. "${qField}": ${tier.q} characters. Together at least ${tier.min + 8} characters (the platform rejects anything under ${tier.min}) and about ${tier.max} or fewer.`,
+    'Fit the content to the budget, never the budget to the content. Choose the single most important detail and say it well. Count the characters of the body and of the ' + qField + ' separately before you answer.',
+    'Go past the budget only when it is truly necessary (explaining something he did not understand, answering several of his points, a heavy moment), and then only by as much as needed. Never cut a thought short and never stop mid-sentence just to hit a number.',
+  ]
+  if (tier.name === 'short' && !sleepy) {
+    lines.push(
+      'SHORT MODE: he wrote very little, so this overrides the three-step body, the point-by-point rule and the length-variety rule above. The body is ONE short sentence of real reaction to the one most important thing he said. No second sentence in the body unless it is under six words. One idea only. The ' + qField + ' is one short, specific, easy-to-answer ' + (noQuestion ? 'statement' : 'question') + '. Still warm, still human, still unmistakably about him.'
+    )
+  }
+  return lines.join('\n')
+}
+
 function buildPrompt(
   message: string,
   context: string,
@@ -956,7 +1001,7 @@ He has not brought up anything sexual in this conversation. She must NOT introdu
 
   const humanBlock = `SOUNDING UNMISTAKABLY HUMAN - THE TEST EVERY REPLY MUST PASS:
 Imagine a stranger reading it beside 50 AI replies. If it could be one of them, rewrite it.
-- The 4 replies must differ in length, rhythm and structure. One can be two short sentences, another can run three. Never open two replies with the same word or shape. Never give all four the same "observation, then question" template.
+- The 4 replies must differ in rhythm and structure (every reply stays inside the LENGTH BUDGET at the end of this prompt). Never open two replies with the same word or shape. Never give all four the same "observation, then question" template.
 - She writes like a woman actually texting: contractions, a fragment now and then, a thought that trails, a small opinion stated flatly. Nothing polished to death.
 - Concrete beats abstract. A tiny believable detail (an object, a place, a habit, a half-memory) is worth more than any adjective.
 - One idea per reply, then the single question. No wrap-up line that neatly explains her own feelings.
@@ -1155,8 +1200,6 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     'Each CTA uses a different mechanic from the list above.',
     '',
     avoidNote,
-    'LENGTH - MATCH HIS ENERGY: ' + tier.note,
-    `Each reply (body and question together): minimum ${tier.min + 8} characters (the platform rejects anything under ${tier.min}, so never go below it), aim for ${tier.max} characters or fewer. Stay at or under ${tier.max} whenever the reply can still be complete and make sense. Go past it only when it is truly necessary, for example to explain something he did not understand, to answer several of his points, or to handle a heavy moment, and then only by as much as needed. Never cut a thought short just to hit the number, and never stop mid-sentence.`,
     ...(sleepy ? [
       'SLEEP MODE - HE IS GOING TO SLEEP OR IS TIRED. Tone the conversation down instead of advancing it, as set out in the SLEEP MODE block at the end of this prompt. Put the gentle closing hook in the "cta" field. It may be a light statement or a soft easy question.',
     ] : noQuestion ? [
@@ -1186,13 +1229,15 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '',
     BODY_QUALITY,
     '',
+    lengthBudgetBlock(tier, noQuestion, sleepy),
+    '',
     'Return ONLY valid JSON - no markdown, no explanation:',
     jsonInstruction,
   ].filter(Boolean).join('\n')
 }
 
 function isCompleteSentence(text: string): boolean {
-  return /[.?!]["']?\s*$/.test(text.trim())
+  return /[.?!]["')\]]*$/.test(text.trim().replace(TRAIL_EMOJI, ''))
 }
 
 // Like splitClosing, but for no-question mode: the closing call to action is the last sentence.
@@ -1221,15 +1266,15 @@ function hasBrokenSyntax(text: string): boolean {
   return false
 }
 
-function lengthCap(tier: LengthTier, relax: boolean, roomy: boolean): number {
-  return Math.round(tier.max * (relax ? 2.1 : roomy ? 1.9 : 1.45))
+function lengthCap(tier: LengthTier, roomy: boolean): number {
+  return Math.round(tier.max * (roomy ? 1.9 : 1.45))
 }
 
-function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false, relax: boolean = false, roomy: boolean = false): Array<{tone: string, text: string}> {
+function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false, roomy: boolean = false, collect?: { long: Array<{tone: string, text: string}>, short: Array<{tone: string, text: string}> }): Array<{tone: string, text: string}> {
   // The tier maximum is the target. Going past it is allowed when the chat truly needs the room
   // (explaining, several points to answer, a heavy moment), and in the relaxed pass. Beyond that, a reply is dropped.
-  const capMax = lengthCap(tier, relax, roomy)
-  return replies.map((r) => {
+  const capMax = lengthCap(tier, roomy)
+  const mapped = replies.map((r) => {
     let text = (r.text || '').trim()
 
     // Safety net behind the "no em dash, no asterisk" prompt rule — models sometimes
@@ -1282,9 +1327,6 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's|aww+|oh wow|that is so (sweet|nice|cool|amazing)|that's so (sweet|nice|cool|amazing))[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    // Too long: dropped, never chopped. Cutting sentences out of the middle breaks the sense of a reply.
-    if (text.length > capMax) return { tone: r.tone || 'Reply', text: '' }
-
     if (!isCompleteSentence(text)) {
       const lp = Math.max(text.lastIndexOf('?'), text.lastIndexOf('.'), text.lastIndexOf('!'))
       if (lp > 30) text = text.substring(0, lp + 1).trim()
@@ -1295,13 +1337,23 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // (and topped up by the retry in POST) instead of padded with identical stock sentences.
 
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length >= tier.min && r.text.length <= capMax && !hasBrokenSyntax(r.text) && !hasDroppedWordArtifact(r.text) && (
-    sleepy ? /[.!?]["')\]]?$/.test(r.text)
-    : noQuestion ? (!r.text.includes('?') && /[.!]["')\]]?$/.test(r.text))
-    // Strict pass wants a closing question. The relaxed pass takes any complete reply, so a good one is never thrown away.
-    : relax ? /[.!?]["')\]]?$/.test(r.text)
-    : (endsWithQuestion(r.text) && (r.text.match(/\?/g) || []).length <= 2)
-  ))
+  })
+  // Length is handled below. A reply that is the wrong size but otherwise sound is handed to the caller
+  // (collect), who rewrites it to fit instead of throwing it away or showing it too long.
+  const out: Array<{tone: string, text: string}> = []
+  for (const r of mapped) {
+    if (!r.text) continue
+    const sound = !hasBrokenSyntax(r.text) && !hasDroppedWordArtifact(r.text) && (
+      sleepy ? /[.!?]["')\]]*$/.test(r.text.replace(TRAIL_EMOJI, ''))
+      : noQuestion ? (!r.text.includes('?') && /[.!]["')\]]*$/.test(r.text.replace(TRAIL_EMOJI, '')))
+      : (hasCTA(r.text) && (r.text.match(/\?/g) || []).length <= 2)
+    )
+    if (!sound) continue
+    if (r.text.length > capMax) { collect?.long.push(r); continue }
+    if (r.text.length < tier.min) { if (r.text.length >= 30) collect?.short.push(r); continue }
+    out.push(r)
+  }
+  return out
 }
 
 // Detects a specific, mechanical signature of a word having been silently dropped
@@ -1317,13 +1369,68 @@ function hasDroppedWordArtifact(text: string): boolean {
   return spaceBeforePeriod || spaceBeforeOther || /,\s*,/.test(text)
 }
 
+// Rewrites replies that are the wrong size so they fit the budget, using a small, fast model call.
+// Over-long replies are shortened, under-length ones are lengthened, and every closing question is kept.
+async function refitReplies(
+  longs: Array<{tone: string, text: string}>,
+  shorts: Array<{tone: string, text: string}>,
+  tier: LengthTier,
+  noQuestion: boolean,
+  deadline: number,
+  sexual: boolean,
+): Promise<Array<{tone: string, text: string}>> {
+  const items = [
+    ...longs.map(r => ({ ...r, dir: 'shorten' })),
+    ...shorts.map(r => ({ ...r, dir: 'lengthen' })),
+  ].slice(0, 6)
+  if (!items.length || deadline - Date.now() < 4000) return []
+  const lo = tier.min + 8
+  const prompt = [
+    'Rewrite each message below so its length fits, without changing her voice, her meaning or her call to action.',
+    `Target: between ${lo} and ${tier.max} characters in total. Count the characters.`,
+    '- "shorten": remove the least important detail. Keep the reaction to him and keep the closing line.',
+    '- "lengthen": add ONE small, specific detail or feeling in her voice before the closing line. Do not add another question.',
+    noQuestion
+      ? 'The closing line is a statement and must end with a period or exclamation mark. No question marks anywhere.'
+      : 'The closing line is the last sentence, stays a question, and ends with a question mark.',
+    'Complete sentences only. No missing words. No dashes, no ellipses, no asterisks. Keep any emoji only if the original has it. Keep the same order and the same tone label.',
+    '',
+    ...items.map((r, i) => `${i + 1}. [${r.dir}, now ${r.text.length} characters, tone ${r.tone}] "${r.text}"`),
+    '',
+    'Return ONLY valid JSON: {"replies":[{"tone":"Tone","text":"rewritten message"}]}',
+  ].join('\n')
+  try {
+    const out = await generate(prompt, { sexual, deadline, fast: true })
+    return parseReplies(cleanLLM(out.text))
+  } catch {
+    return []
+  }
+}
+
+// Last resort when the rewrite call fails: keep the closing line, and from her first sentence keep as many
+// whole clauses as fit, so the reply still reads as complete.
+function compressLocally(text: string, cap: number, min: number): string {
+  const sentences = text.match(/[^.!?]+[.!?]+["')\]]*\s*/g)
+  if (!sentences || sentences.length < 2) return ''
+  const closing = sentences[sentences.length - 1].trim()
+  const first = sentences[0].trim().replace(/[.!?]+["')\]]*$/, '')
+  const clauses = first.split(/,\s+/)
+  let best = ''
+  for (let k = 1; k <= clauses.length; k++) {
+    const candidate = (clauses.slice(0, k).join(', ') + '. ' + closing).trim()
+    if (candidate.length <= cap) best = candidate
+    else break
+  }
+  return best.length >= min ? best : ''
+}
+
 // Says why replies were thrown away, so an empty result can be traced in the logs.
 function diagnoseDrops(parsed: Array<{tone: string, text: string}>, tier: LengthTier): string {
   const c = { parsed: parsed.length, short: 0, long: 0, noQuestion: 0, broken: 0, artifact: 0 }
   for (const r of parsed) {
     const t = (r.text || '').trim()
     if (t.length < tier.min) c.short++
-    if (t.length > lengthCap(tier, false, false)) c.long++
+    if (t.length > lengthCap(tier, false)) c.long++
     if (!endsWithQuestion(t)) c.noQuestion++
     if (hasBrokenSyntax(t)) c.broken++
     if (hasDroppedWordArtifact(t)) c.artifact++
@@ -1406,15 +1513,25 @@ export async function POST(req: Request) {
     // No raw-text fallback: if the output can't be parsed, nothing is shown rather than junk or a refusal message.
     const parsedFirst = parseReplies(cleanLLM(first.text))
     const allParsed = [...parsedFirst]
-    let finalReplies = postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, false, needsRoom)
-    // Strict pass first (wants the closing question). If that leaves fewer than 3, a relaxed pass keeps any
-    // complete, well-formed reply instead of throwing it away and paying for a second AI call.
-    if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, true, needsRoom))
+    const collect = { long: [] as Array<{tone: string, text: string}>, short: [] as Array<{tone: string, text: string}> }
+    let finalReplies = postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, needsRoom, collect)
 
-    // If filters dropped replies (too short, promise, dropped-word artifact, refusal), top the batch up
-    // with ONE retry. If the first provider was Anthropic, the retry skips it.
-    // Retry only if we are short AND there is plenty of time left. A slow retry is worse than three good replies.
-    if (finalReplies.length < 2 && deadline - Date.now() > 18000) {
+    // Replies of the wrong size are rewritten to fit (one small, fast call) instead of being thrown away
+    // or shown too long. If that call fails, over-long ones are compressed locally.
+    if (finalReplies.length < 3 && (collect.long.length || collect.short.length)) {
+      const refit = await refitReplies(collect.long, collect.short, tier, noQuestion, deadline, sexualRoute)
+      allParsed.push(...refit)
+      mergeUnique(finalReplies, postProcess(refit, isMeetupContext, tier, noQuestion, sleepy, needsRoom))
+      if (finalReplies.length < 3) {
+        const local = collect.long
+          .map(r => ({ tone: r.tone, text: compressLocally(r.text, lengthCap(tier, needsRoom), tier.min) }))
+          .filter(r => r.text)
+        mergeUnique(finalReplies, postProcess(local, isMeetupContext, tier, noQuestion, sleepy, needsRoom))
+      }
+    }
+
+    // A full second generation is the slowest thing the route can do, so it only happens when nothing at all is usable.
+    if (finalReplies.length === 0 && deadline - Date.now() > 18000) {
       try {
         const retry = await generate(prompt, {
           sexual: sexualRoute,
@@ -1423,26 +1540,23 @@ export async function POST(req: Request) {
         })
         const parsedRetry = parseReplies(cleanLLM(retry.text))
         allParsed.push(...parsedRetry)
-        mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, false, needsRoom))
-        if (finalReplies.length < 3) mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, true, needsRoom))
+        const collect2 = { long: [] as Array<{tone: string, text: string}>, short: [] as Array<{tone: string, text: string}> }
+        mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, needsRoom, collect2))
+        if (finalReplies.length === 0 && (collect2.long.length || collect2.short.length)) {
+          const refit2 = await refitReplies(collect2.long, collect2.short, tier, noQuestion, deadline, sexualRoute)
+          mergeUnique(finalReplies, postProcess(refit2, isMeetupContext, tier, noQuestion, sleepy, needsRoom))
+        }
       } catch {
-        // Retry failed — proceed with whatever clean replies survived the first pass.
+        // Retry failed. Fall through to the error below.
       }
     }
 
-    // Last resort before an error: accept well-formed replies even if they are a little under the minimum,
-    // and tell the operator to add a few words. A usable draft beats an error.
-    let shortNote = ''
-    if (!finalReplies.length) {
-      const lowTier = { ...tier, min: 45 }
-      mergeUnique(finalReplies, postProcess(allParsed, isMeetupContext, lowTier, noQuestion, sleepy, true, true))
-      if (finalReplies.some(r => r.text.length < tier.min)) shortNote = ` The platform needs at least ${tier.min} characters, so add a few words to any short reply before you send.`
-    }
+    console.log('[CIC] lengths | tier', tier.name, '| raw', JSON.stringify(parsedFirst.map(r => (r.text || '').length)), '| final', JSON.stringify(finalReplies.map(r => r.text.length)))
 
     if (!finalReplies.length) {
       const diag = diagnoseDrops(allParsed, tier)
       console.error('[CIC] Empty result:', JSON.stringify({
-        drops: diagnoseDrops(parsedFirst, tier), rawStart: String(first.text || '').slice(0, 160), tier: tier.name, noQuestion, sleepy, sexualRoute,
+        drops: diag, rawStart: String(first.text || '').slice(0, 160), tier: tier.name, noQuestion, sleepy, sexualRoute,
         model: first.model, ms: Date.now() - reqStart,
       }))
       return NextResponse.json({ error: 'Could not produce a clean set of replies. Tap Generate again. [' + first.model + ' ' + diag + ']', replies: [], remaining: 999 }, { status: 200, headers })
@@ -1451,8 +1565,8 @@ export async function POST(req: Request) {
     const elapsedMs = Date.now() - reqStart
     console.log('[CIC] Done in', elapsedMs, 'ms |', first.model, '|', finalReplies.length, 'replies | tier', tier.name, '| sexual', sexualRoute, '| noQ', noQuestion, '| sleepy', sleepy)
     const notice = detectOrderTopic(context, message)
-      ? 'He mentions an order, payment or something he is waiting for. Check the order log on the platform and answer him honestly before you send anything.' + shortNote
-      : shortNote.trim()
+      ? 'He mentions an order, payment or something he is waiting for. Check the order log on the platform and answer him honestly before you send anything.'
+      : ''
     return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: first.model, elapsedMs, notice }, { headers })
 
   } catch (error: any) {
