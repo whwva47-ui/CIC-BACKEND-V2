@@ -1,4 +1,4 @@
-// CIC generate route v12.0.0 - speed rebuild
+// CIC generate route v12.1.0 - speed rebuild
 import { NextResponse } from 'next/server'
 
 function cors() {
@@ -22,7 +22,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v12.0.0'
+    version: 'v12.1.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -32,7 +32,7 @@ type GenResult = { text: string; model: string }
 // Staggered race: the first model starts at once. If it has not answered after `staggerMs`, the next
 // model starts in parallel (and starts immediately if the first one fails). The first valid answer
 // wins and the rest are cancelled. A slow or rate-limited model no longer holds up the whole reply.
-type RaceTask = { label: string; run: (signal: AbortSignal) => Promise<string> }
+type RaceTask = { label: string; run: (signal: AbortSignal) => Promise<string>; staggerMs?: number }
 
 function raceStaggered(tasks: RaceTask[], staggerMs: number, capMs: number, errors: string[]): Promise<GenResult | null> {
   if (!tasks.length) return Promise.resolve(null)
@@ -71,24 +71,36 @@ function raceStaggered(tasks: RaceTask[], staggerMs: number, capMs: number, erro
         failed()
       })
       if (timer) clearTimeout(timer)
-      if (started < tasks.length) timer = setTimeout(launchNext, staggerMs)
+      if (started < tasks.length) timer = setTimeout(launchNext, t.staggerMs ?? staggerMs)
     }
     launchNext()
   })
 }
 
+async function callAnthropic(model: string, key: string, prompt: string, signal: AbortSignal): Promise<string> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model, max_tokens: 900, temperature: 0.9, messages: [{ role: 'user', content: prompt }] }),
+    signal,
+  })
+  const data: any = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(`${res.status} ${JSON.stringify(data?.error || 'error').substring(0, 80)}`)
+  return (data?.content?.[0]?.text || '').toString()
+}
+
 // Groq through its OpenAI-compatible API, so reasoning effort and JSON mode can be set directly.
 // gpt-oss models think before they answer; on "low" that costs a fraction of a second instead of
 // several seconds, and the replies are short and creative, so deep reasoning adds nothing here.
-async function callGroq(model: string, key: string, prompt: string, signal: AbortSignal): Promise<string> {
+async function callGroq(model: string, key: string, prompt: string, signal: AbortSignal, effort: string = 'medium'): Promise<string> {
   const isOss = model.startsWith('openai/gpt-oss')
   const base: Record<string, unknown> = {
     model,
     messages: [{ role: 'user', content: prompt }],
-    temperature: 0.8,
-    max_completion_tokens: isOss ? 1100 : 750,
+    temperature: 0.9,
+    max_completion_tokens: isOss ? 1500 : 900,
   }
-  const rich = { ...base, response_format: { type: 'json_object' }, ...(isOss ? { reasoning_effort: 'low', include_reasoning: false } : {}) }
+  const rich = { ...base, response_format: { type: 'json_object' }, ...(isOss ? { reasoning_effort: effort, include_reasoning: false } : {}) }
   const post = (body: Record<string, unknown>) => fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
@@ -125,48 +137,21 @@ async function generate(
   const anthropicKey = process.env.ANTHROPIC_API_KEY
   const stripThink = (t: string) => t.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 
-  // ── Anthropic (optional, non-sexual only) ────────────────────────────────
-  // Claude is the slowest option here, so by default it is a fallback after Groq. Set
-  // CIC_PREFER_CLAUDE=1 in Vercel to put it back in front.
-  const tryAnthropic = async (): Promise<GenResult | null> => {
-    if (!anthropicKey || opts.sexual || avoid.has('anthropic') || !hasTime(12000)) return null
-    const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5'
-    try {
-      const ctrl = new AbortController()
-      const timer = setTimeout(() => ctrl.abort(), cap(15000))
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': anthropicKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 700,
-          temperature: 0.8,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-        signal: ctrl.signal,
-      })
-      clearTimeout(timer)
-      const data = await res.json()
-      const text = data?.content?.[0]?.text
-      if (text) {
-        const clean = stripThink(text)
-        if (clean) { console.log('[CIC] Anthropic:', model, Date.now() - t0, 'ms'); return { text: clean, model: 'anthropic/' + model } }
-      }
-      errors.push(`Anthropic: ${JSON.stringify(data?.error || 'empty').substring(0, 80)}`)
-    } catch (e: any) {
-      errors.push(`Anthropic: ${e?.message?.substring(0, 60)}`)
-    }
-    return null
+  // ── Claude + Groq, staggered race ────────────────────────────────────────
+  // Claude writes the most natural replies, so for non-sexual chats it goes first. A Groq model starts
+  // in parallel if Claude has not answered after 6 seconds, so a slow Claude never stalls the operator.
+  // Set CIC_CLAUDE_BACKUP=1 to flip it (Groq first, Claude as backup) when speed matters more.
+  const tasks: RaceTask[] = []
+  const claudeModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5'
+  const useClaude = !!anthropicKey && !opts.sexual && !avoid.has('anthropic') && hasTime(12000)
+  const claudeFirst = process.env.CIC_CLAUDE_BACKUP !== '1'
+  const claudeTask: RaceTask = {
+    label: 'anthropic/' + claudeModel,
+    staggerMs: 6000,
+    run: (signal: AbortSignal) => callAnthropic(claudeModel, anthropicKey || '', prompt, signal).then(stripThink),
   }
-  const claudeFirst = process.env.CIC_PREFER_CLAUDE === '1'
-  if (claudeFirst) { const r = await tryAnthropic(); if (r) return r }
-
-  // ── Groq (staggered race) ────────────────────────────────────────────────
-  if (groqKey && !avoid.has('groq') && hasTime()) {
+  if (useClaude && claudeFirst) tasks.push(claudeTask)
+  if (groqKey && !avoid.has('groq')) {
     // gpt-oss is the most safety-tuned of these and tends to refuse or silently drop
     // explicit words, so it goes last for sexual messages and first for everything else.
     const groqModels = opts.sexual
@@ -181,15 +166,20 @@ async function generate(
           'llama-3.3-70b-versatile',
           'openai/gpt-oss-20b',
         ]
-    const tasks: RaceTask[] = groqModels.map(m => ({
-      label: 'groq/' + m,
-      run: (signal: AbortSignal) => callGroq(m, groqKey, prompt, signal).then(stripThink),
-    }))
-    const won = await raceStaggered(tasks, 3500, cap(12000), errors)
-    if (won) { console.log('[CIC] Groq:', won.model, Date.now() - t0, 'ms'); return won }
+    // With Claude in the race, Groq is the quick backup (low reasoning). On its own it thinks a bit more.
+    const effort = process.env.GROQ_REASONING || (useClaude && claudeFirst ? 'low' : 'medium')
+    for (const m of groqModels) {
+      tasks.push({
+        label: 'groq/' + m,
+        run: (signal: AbortSignal) => callGroq(m, groqKey || '', prompt, signal, effort).then(stripThink),
+      })
+    }
   }
-
-  if (!claudeFirst) { const r = await tryAnthropic(); if (r) return r }
+  if (useClaude && !claudeFirst) tasks.push(claudeTask)
+  if (tasks.length && hasTime()) {
+    const won = await raceStaggered(tasks, 3500, cap(18000), errors)
+    if (won) { console.log('[CIC] Won by', won.model, Date.now() - t0, 'ms'); return won }
+  }
 
   // ── OpenRouter fallback ───────────────────────────────────────────────────
   if (openrouterKey && !avoid.has('openrouter') && hasTime(5000)) {
@@ -213,7 +203,7 @@ async function generate(
           body: JSON.stringify({
             model: orModel,
             messages: [{ role: 'user', content: prompt }],
-            temperature: 0.8,
+            temperature: 0.9,
             max_tokens: 1000,
             // Disable thinking mode for models that support it (Qwen, DeepSeek)
             chat_template_kwargs: { thinking: false },
@@ -249,7 +239,7 @@ async function generate(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.8, maxOutputTokens: 1000 }
+            generationConfig: { temperature: 0.9, maxOutputTokens: 1000 }
           }),
           signal: gemCtrl.signal,
         })
@@ -395,11 +385,31 @@ function describeVoice(herLines: string[]): string {
   const usesEmoji = sample.some(t => emoji.test(t))
   const exclaim = sample.filter(t => t.includes('!')).length
   const asks = sample.filter(t => t.includes('?')).length
+  const all = sample.join(' ')
+  const sentences = all.split(/[.!?]+\s/).filter(x => x.trim().length > 0)
+  const avgWords = Math.round(all.split(/\s+/).filter(Boolean).length / Math.max(1, sentences.length))
+  const contractions = (all.match(/\b\w+'(m|re|s|ve|ll|d|t)\b/gi) || []).length
+  const playful = /\b(haha+|lol|lmao|hehe)\b|😂|😅|😉|😜/i.test(all)
   return [
     usesEmoji ? 'she has used emojis, so one is fine if it fits' : 'she has not used emojis, so use none',
     exclaim >= 2 ? 'she often uses exclamation marks' : 'she rarely uses exclamation marks',
     asks >= sample.length - 1 ? 'she usually ends with a question' : '',
+    'her sentences average about ' + avgWords + ' words',
+    contractions === 0 ? 'she writes without contractions, plainly and a little formally' : contractions >= 3 ? 'she uses contractions' : '',
+    playful ? 'she has been playful and laughs in text' : 'she has been earnest and warm rather than jokey, so keep humour very light unless he starts it',
   ].filter(Boolean).join('; ')
+}
+
+// He mentions something he ordered, paid for, was promised or is waiting on. Such a message must be
+// met plainly and honestly. It is never joked away or stalled, and the operator is told to check.
+function detectOrderTopic(context: string, message: string): boolean {
+  const recent = [...getHisLines(context).slice(-1), message].filter(Boolean).join(' \n ')
+  return /\b(my order|an order|the order|put in an order|placed an order|ordered|custom (photo|pic|video|content|request)s?|special (photo|pic|video)s?|i paid|already paid|payment|purchased?|bought|invoice|refund|tipped|you promised|you said you would|you owe|still waiting|haven'?t (got|received|gotten)|didn'?t (get|receive)|where (is|are) (my|the)|send (them|it|those) to me)\b/i.test(recent)
+}
+
+// He says something painful or hard. Care comes first, before humour, wit or the call to action.
+function detectCareFirst(message: string): boolean {
+  return /\b(i was hurt|got hurt|hurt my|injur(y|ed)|surgery|hospital|in pain|pain|sick|ill\b|cancer|chemo|lonely|so alone|depress(ed|ion)|anxious|anxiety|panic|worried|scared|afraid|stressed|exhausted|burn(ed|t) out|rough (day|week|time|year)|hard time|bad day|struggl(e|ing)|lost my|passed away|funeral|divorc(e|ed)|laid off|got fired|broke up|breakup|miss(ing)? (her|him|my))\b/i.test(message)
 }
 
 function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: boolean = false, message: string = ''): string {
@@ -411,8 +421,8 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
     ].join('\n')
   }
 
-  const thread = hist.slice(-8)
-    .map(l => (l.who === 'HIM' ? 'HIM' : 'HER (you, earlier)') + ': ' + clip(l.text, 220))
+  const thread = hist.slice(-6)
+    .map(l => (l.who === 'HIM' ? 'HIM' : 'HER (you, earlier)') + ': ' + clip(l.text, l.who === 'HIM' ? 800 : 500))
     .join('\n')
 
   // His unanswered messages are the run of HIM lines at the very end of the history.
@@ -428,15 +438,15 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
     'THE CONVERSATION SO FAR - THIS IS WHAT SHE IS CONTINUING (newest last):',
     thread,
   ]
-  if (herLast) parts.push('He is answering her last message: "' + clip(herLast, 220) + '"')
+  if (herLast) parts.push('He is answering her last message: "' + clip(herLast, 500) + '"')
   if (pending.length >= 2) {
     parts.push('He sent ' + pending.length + ' messages in a row since her last reply. She answers them as one thought: ' +
-      pending.map(p => '"' + clip(p, 160) + '"').join(' | '))
+      pending.map(p => '"' + clip(p, 400) + '"').join(' | '))
   }
   if (herLines.length) {
     const voice = describeVoice(herLines)
-    parts.push('HER VOICE SO FAR (her own earlier messages, for voice only, never copy their wording): ' +
-      herLines.slice(-3).map(t => '"' + clip(t, 140) + '"').join(' | '))
+    parts.push('HER REAL VOICE SO FAR (her own earlier messages, in her words. Copy the voice, never the wording): ' +
+      herLines.slice(-3).map(t => '"' + clip(t, 320) + '"').join(' | '))
     if (voice) parts.push('Her habits: ' + voice + '.')
   }
   // Break his latest message(s) into the separate things he said, so none of them is skipped.
@@ -446,7 +456,7 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
     parts.push(
       '',
       'EVERYTHING HE SAID IN HIS LATEST MESSAGE, IN ORDER. THE BODY MUST DEAL WITH EACH POINT:',
-      points.map((x, i) => (i + 1) + '. ' + clip(x, 160)).join('\n'),
+      points.map((x, i) => (i + 1) + '. ' + clip(x, 400)).join('\n'),
       'For each point, give a real, specific response in one short clause or sentence: a question gets a personal answer with her own detail, news or a feeling gets a reaction that fits it (sadness gets care first), a compliment gets received warmly and answered with her own specific one, a plan or request gets a clear answer. Cover them in his order and do not skip any, even a small aside. Do not repeat his words back. Do not turn the body into a list. It should read as one natural text.',
       'Only after every point is handled does the closing call to action come in. It builds on the most alive point on the SAME topic. It never changes the subject.'
     )
@@ -464,7 +474,25 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
       : '4. Answer what he asked before asking anything new. The closing question grows out of what is being discussed right now. If it could be pasted into a different conversation, rewrite it.',
     '5. Never restate or quote his words back to him. Move the thread forward.',
     '6. Use only facts that appear in the thread. Never invent details about him or about earlier messages.',
+    '7. THE REAL THREAD BEATS THE PERSONA. The description of Mia at the top is only a default. If her earlier messages in this chat are plain, earnest, formal, shy or bold, write in THAT register, with her sentence length, warmth and vocabulary. Be witty only if she has been, or he is. Never swap her for a different woman.',
+    '8. READ EACH REPLY BACK BEFORE ANSWERING. Every sentence is complete, no word is missing, nothing stops mid-thought, no sentence is a stranded fragment, and the reply makes sense on its own and as the next turn of this chat.',
   )
+  if (detectCareFirst(latest)) {
+    parts.push(
+      '',
+      'HE SAID SOMETHING THAT HURTS OR WEIGHS ON HIM. CARE COMES FIRST:',
+      'The first sentence of every reply responds to that specific thing, warmly and plainly, in her own words. No joke, no wit, no change of subject, no advice, no cheerleading. He should feel she stopped and took it in. Then she responds to the rest of what he said, and the closing line asks about HIM and how he is, tied to what he shared.'
+    )
+  }
+  if (detectOrderTopic(context, message)) {
+    parts.push(
+      '',
+      'HE IS TALKING ABOUT SOMETHING HE ORDERED, PAID FOR, WAS PROMISED OR IS WAITING ON. THIS COMES BEFORE EVERYTHING ELSE:',
+      'Answer it first, plainly and warmly, so he feels heard and not brushed off. Never joke it away, call it formal, belittle it, change the subject, or turn it into flirting. No sexual escalation in this reply.',
+      'She never says it has been sent, never says it is on its way, and never gives a time, a day or a promise she cannot keep. She stays honest: she tells him she is going to look into it properly, and asks the one useful thing that helps her find it (which request, and roughly when he placed it).',
+      'Do not invent details of the order. Use only what he wrote.'
+    )
+  }
   if (sleepy) {
     parts.push(
       '',
@@ -482,10 +510,10 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
 // The 75 character floor stays. Short messages get short replies, long messages get fuller ones.
 type LengthTier = { name: string; min: number; max: number; note: string }
 const LENGTH_TIERS: Record<string, LengthTier> = {
-  short: { name: 'short', min: 75, max: 130, note: 'He wrote very little. She matches it: one short, punchy sentence of reaction and then the question. Quick and light, no paragraph. She never out-writes him.' },
-  medium: { name: 'medium', min: 80, max: 190, note: 'He wrote a normal-length message. She replies in two or three sentences of reaction, then the question.' },
-  long: { name: 'long', min: 110, max: 260, note: 'He wrote a lot, so she gives it real attention: three or four sentences that pick up specific details he shared, then the question.' },
-  sensitive: { name: 'sensitive', min: 100, max: 260, note: 'This is an important moment in the chat, so she takes the room she needs to handle it well, and still finishes with the one closing question.' },
+  short: { name: 'short', min: 75, max: 160, note: 'He wrote very little. She keeps it light and quick: one or two short sentences of real reaction, then the question. Still warm, still specific to him.' },
+  medium: { name: 'medium', min: 80, max: 270, note: 'He wrote a normal-length message. She replies in two to four sentences that cover what he said and add something of her own, then the question.' },
+  long: { name: 'long', min: 110, max: 390, note: 'He wrote a lot, so she gives it real attention: three to five sentences that respond to each thing he shared, in his order, with specific details, then the question.' },
+  sensitive: { name: 'sensitive', min: 100, max: 390, note: 'This is an important moment in the chat, so she takes the room she needs to handle it well, and still finishes with the one closing question.' },
 }
 
 // He is winding down for the night: the reply should tone the conversation down, not push it forward.
@@ -1095,7 +1123,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '',
     avoidNote,
     'LENGTH - MATCH HIS ENERGY: ' + tier.note,
-    `Each reply (body and question together): minimum ${tier.min} characters, maximum ${tier.max} characters. Count them. Going over ${tier.max} is a failure.`,
+    `Each reply (body and question together): minimum ${tier.min} characters, maximum ${tier.max} characters. Aim to stay inside that range. A reply that runs far over is thrown away, so finish the thought cleanly instead.`,
     ...(sleepy ? [
       'SLEEP MODE - HE IS GOING TO SLEEP OR IS TIRED. Tone the conversation down instead of advancing it, as set out in the SLEEP MODE block at the end of this prompt. Put the gentle closing hook in the "cta" field. It may be a light statement or a soft easy question.',
     ] : noQuestion ? [
@@ -1142,6 +1170,24 @@ function splitLastSentence(text: string): { lead: string; closing: string } | nu
   return { lead: m[1].trim(), closing: m[2].trim() }
 }
 
+// Catches replies where the model dropped a word or left a thought hanging, which a plain
+// length or punctuation check cannot see.
+function hasBrokenSyntax(text: string): boolean {
+  const t = text.trim()
+  // Doubled small words: "the the", "and and"
+  if (/\b(the|a|an|of|and|but|or|with)\s+\1\b/i.test(t)) return true
+  // A sentence that stops on a word that cannot end one: "...in a picture of?" "...and"
+  if (/\b(the|a|an|of|to|and|but|or|with|your|my|his|her|their|our|that|this|these|those|than|if|so)\s*[.!?]["')\]]?(\s|$)/i.test(t)) return true
+  // Article followed directly by a pronoun and verb: "describe the you want", "a I would"
+  if (/\b(the|a|an)\s+(you|i|we|they|he|she)\s+(want|wanna|need|would|are|were|have|had|do|did|can|could|will|am)\b/i.test(t)) return true
+  // "to" followed by a conjugated verb pronoun pair, e.g. "to you want"
+  if (/\bto\s+(you|i|we|they)\s+(want|need|would|are|were|have|had|do|did|can|could|will|am)\b/i.test(t)) return true
+  // A short fragment sentence that is just a subject + verb with nothing after, followed by a capital word:
+  // "Ordering photos feels. Formal"
+  if (/(^|[.!?]\s)(\w+\s){1,3}(feels?|seems?|looks?|sounds?|is|are|was|were|has|have|had)\.\s+[A-Z]/.test(t)) return true
+  return false
+}
+
 function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false): Array<{tone: string, text: string}> {
   return replies.map((r) => {
     let text = (r.text || '').trim()
@@ -1157,11 +1203,16 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     text = text.replace(/\s*—\s*/g, (match, offset) => (/[A-Z]/.test(text.charAt(offset + match.length)) ? '. ' : ', '))
     // En dashes and hyphens used as dashes (" - ", "--") read the same as em dashes, so they get the same treatment.
     text = text.replace(/\s*(?:–|--+)\s*|\s+-\s+/g, (match, offset) => (/[A-Z]/.test(text.charAt(offset + match.length)) ? '. ' : ', '))
-    // Ellipses: dropped after ? or !, otherwise a plain full stop. Looks less like AI padding.
+    // Ellipses. After ? or ! they just go. Before a lowercase word the sentence simply continues
+    // (turning that into a full stop would split one sentence into two fragments). Before a capital
+    // letter it becomes a full stop. At the end it becomes a full stop.
     text = text.replace(/([?!])\s*(?:\.{2,}|…)/g, '$1')
-    text = text.replace(/\s*(?:\.{2,}|…)\s*/g, (match, offset) => (offset + match.length >= text.length ? '.' : '. '))
+    text = text.replace(/\s*(?:\.{2,}|…)\s*/g, (match, offset) => {
+      const next = text.charAt(offset + match.length)
+      if (!next) return '.'
+      return /[a-z]/.test(next) ? ' ' : '. '
+    })
     text = text.replace(/,\s*([.!?])/g, '$1').replace(/\.\s*\./g, '.').replace(/\s{2,}/g, ' ').trim()
-    text = text.replace(/([.!?]\s+)([a-z])/g, (_m, a, b) => a + b.toUpperCase())
 
     const isNaughty = /naughty|spicy/i.test(r.tone || '')
     if (!isNaughty) {
@@ -1191,22 +1242,8 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     text = text.replace(/^(that sounds amazing|how sweet|i love that|wow that's|aww+|oh wow|that is so (sweet|nice|cool|amazing)|that's so (sweet|nice|cool|amazing))[,!.]?\s*/i, '')
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    // Too long: shorten the lead sentence(s) and always keep the closing question intact.
-    if (text.length > tier.max) {
-      const parts = (noQuestion || (sleepy && !endsWithQuestion(text))) ? splitLastSentence(text) : splitClosing(text)
-      const empty = { tone: r.tone || 'Reply', text: '' }
-      if (!parts || !parts.lead) return empty
-      const room = tier.max - parts.closing.length - 1
-      if (room < 25) return empty
-      let lead = parts.lead
-      if (lead.length > room) {
-        const cut = lead.substring(0, room)
-        const last = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'))
-        if (last < 20) return empty
-        lead = cut.substring(0, last + 1)
-      }
-      text = lead + ' ' + parts.closing
-    }
+    // Too long: dropped, never chopped. Cutting sentences out of the middle breaks the sense of a reply.
+    if (text.length > Math.round(tier.max * 1.15)) return { tone: r.tone || 'Reply', text: '' }
 
     if (!isCompleteSentence(text)) {
       const lp = Math.max(text.lastIndexOf('?'), text.lastIndexOf('.'), text.lastIndexOf('!'))
@@ -1218,7 +1255,7 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     // (and topped up by the retry in POST) instead of padded with identical stock sentences.
 
     return { tone: r.tone || 'Reply', text }
-  }).filter(r => r.text.length >= tier.min && r.text.length <= tier.max && (sleepy ? /[.!?]["')\]]?$/.test(r.text) : noQuestion ? (!r.text.includes('?') && /[.!]["')\]]?$/.test(r.text)) : endsWithQuestion(r.text)) && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
+  }).filter(r => r.text.length >= tier.min && r.text.length <= Math.round(tier.max * 1.15) && !hasBrokenSyntax(r.text) && (sleepy ? /[.!?]["')\]]?$/.test(r.text) : noQuestion ? (!r.text.includes('?') && /[.!]["')\]]?$/.test(r.text)) : endsWithQuestion(r.text)) && !hasDroppedWordArtifact(r.text) && (r.text.match(/\?/g) || []).length <= 2)
 }
 
 // Detects a specific, mechanical signature of a word having been silently dropped
@@ -1334,7 +1371,10 @@ export async function POST(req: Request) {
 
     const elapsedMs = Date.now() - reqStart
     console.log('[CIC] Done in', elapsedMs, 'ms |', first.model, '|', finalReplies.length, 'replies | tier', tier.name, '| sexual', sexualRoute, '| noQ', noQuestion, '| sleepy', sleepy)
-    return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: first.model, elapsedMs }, { headers })
+    const notice = detectOrderTopic(context, message)
+      ? 'He mentions an order, payment or something he is waiting for. Check the order log on the platform and answer him honestly before you send anything.'
+      : ''
+    return NextResponse.json({ replies: finalReplies, remaining: 999, plan: userPlan, modelUsed: first.model, elapsedMs, notice }, { headers })
 
   } catch (error: any) {
     const errMsg = error?.message || 'Generation failed'
