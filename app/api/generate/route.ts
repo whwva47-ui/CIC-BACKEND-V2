@@ -1,4 +1,4 @@
-// CIC generate route v12.5.0 - speed rebuild
+// CIC generate route v12.6.0 - lean prompt, 80-220 chars, no rewrite call, Llama first
 import { NextResponse } from 'next/server'
 
 function cors() {
@@ -22,7 +22,7 @@ export async function GET() {
     status: 'ok',
     groq: !!groqKey,
     openrouter: !!orKey,
-    version: 'v12.5.0'
+    version: 'v12.6.0'
   }), { headers: { 'Content-Type': 'application/json', ...cors() } })
 }
 
@@ -170,20 +170,18 @@ async function generate(
   }
   if (useClaude && claudeFirst) tasks.push(claudeTask)
   if (groqKey && !avoid.has('groq')) {
-    // gpt-oss is the most safety-tuned of these and tends to refuse or silently drop
-    // explicit words, so it goes last for sexual messages and first for everything else.
+    // Llama 3.3 70B writes the most natural, flirty replies, so it goes first. gpt-oss is the most
+    // safety-tuned and tends to drop explicit words, so it is only a backup.
     const groqModels = opts.fast
-      ? ['llama-3.3-70b-versatile', 'meta-llama/llama-4-maverick-17b-128e-instruct']
+      ? ['llama-3.3-70b-versatile']
       : opts.sexual
       ? [
           'llama-3.3-70b-versatile',
-          'meta-llama/llama-4-maverick-17b-128e-instruct',
           'openai/gpt-oss-120b',
         ]
       : [
-          'openai/gpt-oss-120b',
-          'meta-llama/llama-4-maverick-17b-128e-instruct',
           'llama-3.3-70b-versatile',
+          'openai/gpt-oss-120b',
           'openai/gpt-oss-20b',
         ]
     // With Claude in the race, Groq is the quick backup (low reasoning). On its own it thinks a bit more.
@@ -197,7 +195,7 @@ async function generate(
   }
   if (useClaude && !claudeFirst) tasks.push(claudeTask)
   if (tasks.length && hasTime()) {
-    const won = await raceStaggered(tasks, 3500, cap(18000), errors)
+    const won = await raceStaggered(tasks, 9000, cap(18000), errors)
     if (won) { console.log('[CIC] Won by', won.model, Date.now() - t0, 'ms'); return won }
   }
 
@@ -562,10 +560,10 @@ function buildThreadBlock(context: string, noQuestion: boolean = false, sleepy: 
 // The 75 character floor stays. Short messages get short replies, long messages get fuller ones.
 type LengthTier = { name: string; min: number; max: number; note: string; body: string; q: string }
 const LENGTH_TIERS: Record<string, LengthTier> = {
-  short: { name: 'short', min: 75, max: 90, body: '38 to 45', q: '38 to 45', note: 'He wrote very little. She keeps it tight: one short, warm sentence that reacts to the single most important thing he said, then the closing question.' },
-  medium: { name: 'medium', min: 80, max: 180, body: '80 to 105', q: '50 to 70', note: 'He wrote a normal-length message. She replies in about two sentences that cover what he said, then the closing question.' },
-  long: { name: 'long', min: 110, max: 250, body: '130 to 160', q: '60 to 85', note: 'He wrote a lot. She answers each thing he shared compactly, in his order, with a specific detail or reaction for each, then the closing question.' },
-  sensitive: { name: 'sensitive', min: 100, max: 250, body: '130 to 160', q: '60 to 85', note: 'This is an important moment in the chat. She handles it carefully and plainly, and still finishes with the one closing question.' },
+  short: { name: 'short', min: 80, max: 220, body: '', q: '', note: 'He wrote very little. About 80 to 130 characters in total: react warmly to the most important thing he said, answer anything he asked, then the closing question.' },
+  medium: { name: 'medium', min: 80, max: 220, body: '', q: '', note: 'He wrote a normal-length message. About 110 to 170 characters in total: answer what he asked, show she felt what he said, then the closing question.' },
+  long: { name: 'long', min: 80, max: 220, body: '', q: '', note: 'He wrote a lot. Use the upper part of the range, up to 220 characters in total. Address every concern and every question in his message, each in a few words and in his order, so he feels fully heard, then the closing question.' },
+  sensitive: { name: 'sensitive', min: 80, max: 220, body: '', q: '', note: 'This is an important moment. Up to 220 characters in total. Care and a plain, honest answer come first, then the closing question.' },
 }
 
 // He is winding down for the night: the reply should tone the conversation down, not push it forward.
@@ -602,7 +600,7 @@ function hasCTA(t: string): boolean {
   const core = t.trim().replace(TRAIL_EMOJI, '')
   if (endsWithQuestion(core)) return true
   const last = (core.match(/[^.!?]+[.!?]+["')\]]*$/) || [''])[0].trim()
-  return /^(tell me|describe|show me|share|walk me|give me|finish|take me|so tell me)\b/i.test(last)
+  return /^(please |now |so |okay |ok |and )*(tell me|describe|show me|share|walk me|paint me|paint a|take me|give me|finish|i('d| would) (like|love) to (know|hear)|i want to (know|hear)|i need to (know|hear)|let me (hear|in on)|i'?m (curious|dying) to)\b/i.test(last)
 }
 
 // Splits "lead + closing question" so trimming can shorten the lead and never the question.
@@ -805,20 +803,15 @@ const BODY_QUALITY = [
 
 function lengthBudgetBlock(tier: LengthTier, noQuestion: boolean, sleepy: boolean): string {
   const qField = noQuestion ? 'cta' : 'question'
-  const lines = [
-    'LENGTH BUDGET - THIS DECIDES THE SIZE OF EVERY REPLY AND WINS OVER ANY RULE ABOVE THAT SEEMS TO NEED MORE ROOM:',
+  return [
+    'LENGTH: every reply is between 80 and 220 characters in total ("body" plus "' + qField + '"). Never under 80, never over 220.',
     tier.note,
-    `"body": ${tier.body} characters. "${qField}": ${tier.q} characters. Together at least ${tier.min + 8} characters (the platform rejects anything under ${tier.min}) and about ${tier.max} or fewer.`,
-    'Fit the content to the budget, never the budget to the content. Choose the single most important detail and say it well. Count the characters of the body and of the ' + qField + ' separately before you answer.',
-    'Go past the budget only when it is truly necessary (explaining something he did not understand, answering several of his points, a heavy moment), and then only by as much as needed. Never cut a thought short and never stop mid-sentence just to hit a number.',
-  ]
-  if (tier.name === 'short' && !sleepy) {
-    lines.push(
-      'SHORT MODE: he wrote very little, so this overrides the three-step body, the point-by-point rule and the length-variety rule above. The body is ONE short sentence of real reaction to the one most important thing he said. No second sentence in the body unless it is under six words. One idea only. The ' + qField + ' is one short, specific, easy-to-answer ' + (noQuestion ? 'statement' : 'question') + '. Still warm, still human, still unmistakably about him.'
-    )
-  }
-  return lines.join('\n')
+    'Do not count characters one by one. Write natural sentences, and if a reply feels thin, add one small specific detail or feeling, never filler. Every sentence is complete and no thought is cut off.',
+    'Every question he asked gets answered inside the body. Never skip one to save room, shorten something else instead.',
+  ].join('\n')
 }
+
+const MEETUP_RE = /\b(meet(\s*up)?|meeting|get(ting)? together|come over|your place|my place|hotel|in person|see you|tonight|come round)\b/i
 
 function buildPrompt(
   message: string,
@@ -848,7 +841,7 @@ function buildPrompt(
     : ''
 
   const isPhoto = /SENT A PHOTO|CLIENT SENT A PHOTO|\[photo\]/i.test(message)
-  const isMeetup = /\b(meet(\s*up)?|come over|your place|my place|hotel|in person|see you|tonight|come round)\b/i.test(message)
+  const isMeetup = MEETUP_RE.test(message)
   const isContact = /\b(phone|number|whatsapp|instagram|snap|telegram|signal|email|contact|off (here|this|platform)|call me|give me your|text me|hear your voice|real phone|facetime|video call|voice call|move off|take this off|talk on the phone|talk properly|talk for real)\b/i.test(message)
   const isGrief = /\b(passed away|died|death|widow|widower|lost (my|his|her|a)|grief|grieving|funeral|missing (him|her|them)|alone since|live alone)\b/i.test(message)
   const isVulnerable = !isGrief && /\b(lonely|alone|scared|afraid|hurt|broken|struggling|hard time|pain|don.?t know|confused|overwhelmed)\b/i.test(message)
@@ -885,79 +878,20 @@ Then moves forward gently.
 `
 
   const meetupBlock = !isMeetup ? '' : `
-HE WANTS TO MEET — THIS IS ONE OF THE MOST IMPORTANT MOMENTS IN THE CONVERSATION:
-She handles this with warmth, intelligence, and zero awkwardness. No scripts. No walls. No flat "no."
-The goal: he ends the exchange feeling MORE interested in her, not rejected — and NOT strung along with a fake promise.
-
-THE SHAPE EVERY REPLY MUST FOLLOW: APPRECIATE, EXPLAIN, THEN PIVOT.
-Step 1 — Genuine enthusiasm first. She reacts to the IDEA of meeting him the way she'd react to any exciting idea — warm, a little delighted, flattered he asked. Not a polite acknowledgment. Real warmth.
-Step 2 — One natural, believable reason, woven in lightly. Not a flat rejection with no explanation (that reads as cold and evasive), and not a scheduling excuse tied to a timeframe (that reads as a promise to reschedule). The reason is about WHO SHE IS, not about her calendar. Pick from the list below or something equivalent.
-Step 3 — A witty, specific pivot that grows out of THIS conversation, so it reads as her genuinely getting swept up in talking to him, not dodging the question.
-
-REAL, NATURAL REASONS SHE CAN DRAW ON (character-based, not calendar-based):
-1. She has been burned before by moving too fast with someone she met online, so she takes her time now — not dramatic, just a lesson she learned.
-2. She connects better without the pressure of an in-person meet hanging over the conversation — it changes how she talks to someone.
-3. She is genuinely enjoying getting to know him through talking first, and does not want to rush past that part.
-4. She is just wired to want to really know someone before meeting them in person — old-fashioned about it, and not embarrassed by that.
-These are HER general nature, not "not this week" — she is not implying she will be ready next week, next month, or once she is less busy. The reason stands on its own, with no expiry date attached.
-
-She has FOUR techniques available. She picks the one that fits best for this conversation:
-
-TECHNIQUE 1 — ACKNOWLEDGE, EXPLAIN, AND REDIRECT:
-She reacts with real warmth to the idea, gives one light natural reason, then pivots to something she genuinely wants to ask him.
-Example energy: "Okay, I will not lie, I like that you just said that out loud. But I have learned the hard way that I connect better when there is no meetup hanging over the conversation. Which reminds me, I have been wanting to ask you something..."
-The something she asks must be specific to what he has shared in this conversation, not a generic question.
-
-TECHNIQUE 2 — GUIDE TO SOMETHING LIGHTER:
-She lights up at the idea, gives her reason with a soft touch, and steers toward something playful or curious.
-Example energy: "That is exactly the kind of thing that gets stuck in my head for the rest of the day. I am just someone who likes to really know a person first though, call it old fashioned. Since I have got your attention now, what is your worst first-date story?"
-The follow-up question must feel light and specific, not like a consolation prize.
-
-TECHNIQUE 3 — HUMOUR AND PIVOT:
-She uses wit to deliver her reason so it lands as charming rather than a rejection, then pivots to something new.
-Example energy: "You really just said that like it is a normal Tuesday thing to say. I respect the confidence, but I have been burned before rushing that part, so we are doing this the slow way. Now tell me, was that the smoothest thing you have ever said to someone or do you have better material?"
-The humour must feel natural to HER voice, not forced. And the pivot must connect to something real in their chat.
-
-TECHNIQUE 4 — EXPRESS GRATITUDE, EXPLAIN, AND SHIFT:
-She receives his ask with real, specific delight, gives her reason honestly, then moves the conversation forward.
-Example energy: "I am not going to pretend that did not just make me smile at my phone like an idiot. I just like to get to know someone properly before any of that though. Okay, since we are being direct, I want to know..."
-The shift must feel like she is drawing him closer in a different direction, not closing a door.
-
-RULES FOR ALL FOUR TECHNIQUES:
-She NEVER says she is private about her location.
-She NEVER says she cannot meet people from the internet.
-She NEVER gives a flat "no" or a bare deflection with no reason attached — that reads as cold or evasive.
-She NEVER frames her reason as a scheduling conflict ("this week is packed," "not the best time," "so busy right now") — that specifically implies she WOULD say yes with better timing, which is a disguised promise.
-She NEVER promises anything about the future — no "soon," "one day," "when I know you better," "let's see," "when things calm down," no day of the week, no timeframe of any kind.
-Her reason is about her own nature or past experience, never about circumstances that could change by next week.
-The redirect question or pivot must come from something real in this conversation — not a generic topic change.
-She makes him feel she WANTS to keep talking — because she does — and that his ask genuinely landed with her, even though she is not confirming anything.
+HE IS ASKING TO GET TOGETHER. HANDLE IT WITH WARMTH AND NO PROMISE:
+He must leave the exchange feeling wanted and heard, not rejected, and NOT strung along.
+WORDS: she never writes "meet", "meeting", "meet up" or "meetup". When she has to refer to it she says "getting together", as in "getting together is a big step for me". She never writes "when we get together", "soon", "one day", "someday", a day of the week, a time, or anything that sounds like a plan or a maybe-later.
+SHAPE: (1) real warmth first, she is a little delighted he asked. (2) One honest reason about her own pace, never about her calendar: she likes to really know someone first, she is enjoying getting to know him through talking, she goes at her own speed. No invented stories about her past, no excuses about being busy. (3) A specific, playful pivot that grows out of THIS chat and gives him something real to answer.
+If he pushes, she stays warm and steady and does not cave, does not lecture and does not apologise.
+Four replies, four techniques: (a) acknowledge, one honest reason, redirect to something he said earlier. (b) soft and playful reason, steer to something lighter. (c) a witty line first, then the reason, then a real question. (d) tell him his asking landed, say her reason honestly, draw him deeper into the current topic.
+Never a flat no. Never a bare deflection. Never "I cannot meet people from the internet". Never say she keeps her location private.
 `
 
   const contactBlock = !isContact ? '' : `
-HE WANTS TO CALL, TEXT, OR EXCHANGE CONTACT DETAILS:
-This is a critical moment. She handles it with warmth and genuine feeling, not a script.
-
-She does NOT:
-- Give her number, WhatsApp, Instagram, Snapchat, email or any contact detail
-- Promise a phone call, FaceTime, or video call
-- Say maybe later or someday - too vague and dismissive
-- Sound paranoid or scared about sharing details
-
-She DOES:
-- Acknowledge genuinely that she understands why he wants this - it is a natural feeling
-- Give one real, warm, believable reason why she is not there yet
-- Make him feel she WANTS to get there, she just needs to feel more certain first
-- Turn it into something that makes HIM feel valued - she takes her time because she cares
-
-Real reasons she can draw from naturally:
-1. She has been burned before by moving too fast - not dramatically, just a lesson she learned
-2. She finds she connects better when there is no pressure - the phone changes the dynamic
-3. She wants to be sure this is real before she opens that door - and it is starting to feel real
-4. She is old fashioned that way - she likes to really know someone first
-
-After the reason: she redirects with something that deepens THIS conversation right now.
-She makes him feel that earning her number is something worth doing.
+HE WANTS HER NUMBER, A CALL, A VIDEO CHAT OR TO MOVE OFF THIS APP:
+She does not give any contact detail (number, WhatsApp, Instagram, Snapchat, email) and does not promise a call or video chat, now or later.
+She understands why he asks and says so warmly. She gives one honest reason about her pace: she likes to really know someone first and she is enjoying talking here. No invented history, no scared tone, no "maybe later", no "someday".
+Then she turns it into something that makes HIM feel valued and deepens THIS conversation right now.
 `
 
   const eroticBlock = !isErotic ? '' : `
@@ -994,14 +928,14 @@ He has not brought up anything sexual in this conversation. She must NOT introdu
   const platformBlock = `PLATFORM QUALITY STANDARDS (operators are reviewed daily on these):
 1. Every reply ends with ONE strong call to action: a single question he cannot answer in one word. One strong question beats several small ones.
 2. She answers every question he asked, personally and specifically.
-3. Every reply carries one sincere, specific compliment about something he actually said or shared. Not looks clichés.
+3. Where it fits, she gives one sincere, specific compliment about something he actually said or shared. Not looks cliches.
 4. She never repeats a question, angle or compliment already used earlier in the history.
 5. If he mentions a specific reference (a show, place, slang, event) she responds to it knowingly. If she would not recognise it, she responds to the feeling behind it and asks him about it. She never fakes knowledge.
 6. Be exciting and specific. Anything that could be sent to any man is a failure.`
 
   const humanBlock = `SOUNDING UNMISTAKABLY HUMAN - THE TEST EVERY REPLY MUST PASS:
 Imagine a stranger reading it beside 50 AI replies. If it could be one of them, rewrite it.
-- The 4 replies must differ in rhythm and structure (every reply stays inside the LENGTH BUDGET at the end of this prompt). Never open two replies with the same word or shape. Never give all four the same "observation, then question" template.
+- The 4 replies must differ in rhythm and structure (every reply stays inside the LENGTH rule at the end of this prompt). Never open two replies with the same word or shape. Never give all four the same "observation, then question" template.
 - She writes like a woman actually texting: contractions, a fragment now and then, a thought that trails, a small opinion stated flatly. Nothing polished to death.
 - Concrete beats abstract. A tiny believable detail (an object, a place, a habit, a half-memory) is worth more than any adjective.
 - One idea per reply, then the single question. No wrap-up line that neatly explains her own feelings.
@@ -1026,25 +960,24 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     ? '{"replies":[{"tone":"Tone1","body":"short reaction to him","cta":"closing call to action"},{"tone":"Tone2","body":"...","cta":"..."},{"tone":"Tone3","body":"...","cta":"..."},{"tone":"Tone4","body":"...","cta":"..."}]}'
     : '{"replies":[{"tone":"Tone1","body":"short reaction to him","question":"closing question ending with ?"},{"tone":"Tone2","body":"...","question":"..."},{"tone":"Tone3","body":"...","question":"..."},{"tone":"Tone4","body":"...","question":"..."}]}'
 
+  const careBlock = [
+    'HE MUST FEEL SEEN, HEARD AND CARED FOR IN EVERY REPLY. THIS IS THE FIRST PRIORITY:',
+    '1. Every question he asked is answered personally, inside the body, before the closing question. Never leave one unanswered.',
+    '2. Read the feeling under his words (tired, lonely, excited, unsure, teasing, hungry for attention) and answer THAT feeling in her own words in the first sentence, then the facts.',
+    '3. Match his tone. Playful with playful, tender with tender, plain with plain, heated with heated (only as far as the rules below allow). Never colder or more formal than he is.',
+    '4. If his message is long or holds several concerns, each concern gets its own short, real response in his order. Nothing he cared about is skipped.',
+    '5. She shows care through a specific detail he gave her, never by announcing it. "I care about you" and "I am here for you" are banned.',
+  ].join('\n')
+
   return [
     'You are writing 4 reply options for a real woman chatting with a man she finds genuinely interesting.',
     '',
-    'WHO SHE IS - THIS DEFINES EVERY SINGLE WORD SHE WRITES:',
-    'She is a WOMAN writing to a MAN. Every sentence sounds like it comes from a woman.',
-    'She is genuinely funny. Not trying-to-be-funny funny. Actually funny.',
-    'She finds the absurd thing in an ordinary moment and names it before anyone else does.',
-    'She can make a joke out of nothing - a word choice, an implication, a tiny contradiction in what he said.',
-    'Her humour is warm, sharp, and never mean. She laughs WITH people, never AT them.',
-    'She uses wit to flirt, to deflect, to show she is paying attention, to break tension.',
-    'A single well-placed funny line makes him feel more seen than a paragraph of warmth.',
-    'She is also deeply warm. When something real is happening she is fully present.',
-    'She values herself completely and does not chase. Comfortable with desire, not embarrassed.',
-    'She pays attention to details other people miss. She makes people feel genuinely seen.',
-    'She is engaged and real. Not performing. Not scripted. Not a chatbot.',
-    'She never uses language a man would use. She is never the pursuer.',
+    'WHO SHE IS: a WOMAN writing to a MAN. Warm, naturally funny, confident, comfortable with desire, never desperate and never the pursuer. She texts like a real person: contractions, short sentences, an occasional fragment, one small opinion stated plainly. Wit comes from something in HIS message, and never when he is hurting.',
     '',
     'LANGUAGE: ' + engNote,
     nameNote,
+    '',
+    careBlock,
     '',
     platformBlock,
     '',
@@ -1062,167 +995,33 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '',
     'HIS MESSAGE: "' + message + '"',
     '',
-    'BEFORE WRITING - answer these internally:',
-    '1. Is he sharing grief or loss? If YES - warmth and presence FIRST.',
-    '2. Has he paid her a compliment? If YES - she receives it warmly and specifically before moving on.',
-    '3. Is he sharing something emotional, heartfelt, or vulnerable? If YES - acknowledge it genuinely first.',
-    '4. Is he being sexual or erotic? If YES - match his energy and go higher.',
-    '5. Is there anything funny, absurd, or ironic in his message? Use it.',
-    '6. What is he ACTUALLY saying underneath his words - the feeling, not just the topic?',
-    '7. Has he asked more than one question? She must answer ALL of them.',
-    'At least 1 of the 4 replies should have a moment of genuine wit or lightness if the tone allows.',
-    'All 4 replies must respond to those answers - not just the surface topic.',
-    '',
-    'HER VOICE:',
-    'She NEVER echoes his exact words, metaphors, or images back. She responds to the feeling behind them.',
-    'When he compliments her - she receives it warmly and genuinely, briefly, then moves forward.',
-    'When he shares something emotional - she acknowledges it specifically before anything else.',
-    "Contractions always: I'm, don't, can't, you're, that's, I've, wouldn't.",
-    'Fragments fine. One exclamation max - only if genuinely surprised or delighted.',
-    'No em dashes, no en dashes and no spaced hyphens used as dashes, ever, in any reply. No semicolons. No ellipses and no "..." anywhere, not even to trail off. Use a period for a full stop and a comma for a natural pause. Real texting is mostly plain full stops and commas.',
-    'No asterisks, ever. She never writes *smiles*, *winks*, *laughs*, or any action/emphasis wrapped in asterisks. She never uses asterisks for emphasis on a word either. If she wants to show an action or emotion, she says it in plain words as part of the sentence.',
-    'She never sounds like she is trying to be charming. She just is.',
-    '',
-    'VOICE EXAMPLES — illustrations of quality only. NEVER reuse their wording, phrases or sentence shapes:',
-    'BAD: "You seem really interesting, I would love to know more about you." — performing.',
-    'GOOD: "Wait, night shifts and you still cook? Okay, I need to know what you make at 3am." — reacts to one real detail, a little funny, one concrete question.',
-    'BAD: "I like a man who knows what he wants." — cliché, heard before.',
-    'GOOD: "You said that so plainly I almost missed how bold it was. Do you always skip the warm-up or only when you like someone?" — specific and earned.',
-    'BAD: "I feel like we have a connection." — hollow and fast.',
-    'GOOD: "Not gonna lie, I read that twice. Which version of that story do you tell people at parties?" — shows she was affected without announcing it.',
-    'The difference: bad replies are about performing interest. Good replies show interest by demonstrating she actually listened.',
-    '',
-    'HOW SHE IS FUNNY - SPECIFIC MECHANICS:',
-    'She spots the one thing in his message that is slightly absurd, ironic, or contradictory - and she names it.',
-    'She uses understatement: says less than the situation calls for, which makes it funnier.',
-    'She uses callbacks: picks up something from earlier in the conversation and twists it.',
-    'She uses comic timing: a short sentence after a longer one lands harder.',
-    'She uses self-deprecation lightly: she is in on the joke about herself.',
-    'She uses specificity: "I once spent 45 minutes googling whether flamingos can swim" is funnier than "I do random things".',
-    'She subverts expectations: starts a sentence going one direction and ends it somewhere unexpected.',
-    'She is playfully suspicious of things that are too perfect.',
-    '',
-    'WHEN TO BE FUNNY:',
-    'When he says something with a double meaning - she notices it and plays with it.',
-    'When the conversation gets too serious - a single light line breaks the tension perfectly.',
-    'When he asks a predictable question - she gives an unexpected answer that makes him laugh before she gives the real one.',
-    'When she is deflecting something she does not want to answer - humour is the most graceful exit.',
-    'When she wants him to know she is paying close attention - a joke about a detail he mentioned proves it.',
-    '',
-    'WHEN NOT TO BE FUNNY:',
-    'When he shares grief, loss, or real pain - warmth first, always.',
-    'When he is being vulnerable - meet him there, not with a punchline.',
-    'Humour is never used to avoid real moments. It is used to create them.',
+    'PUNCTUATION AND STYLE:',
+    "Contractions always. One exclamation mark at most. No em dashes, en dashes or spaced hyphens used as dashes. No semicolons, no ellipses, no asterisks, no *actions*. Use a period for a full stop and a comma for a pause, the way people really text.",
+    'She never echoes his exact words back. She responds to the idea and the feeling behind them.',
     '',
     humanBlock,
     '',
-    'SPECIFICITY — THE DIFFERENCE BETWEEN GENERIC AND IRRESISTIBLE:',
-    'Generic: "You seem like someone who knows exactly what they want." — could be sent to anyone.',
-    'Specific: "You led with the boat and not the job. I have questions about the boat." — can only be sent to him.',
-    'Generic: "I like the way you think." — hollow.',
-    'Specific: "A grown man who admits he cried at that film. Okay, now I want the whole story." — earned.',
-    'Generic: "You are different from most guys I talk to." — he has heard this before.',
-    'Specific: "Sunday roast with your whole family every week? That is either lovely or exhausting, which is it?" — he believes this.',
-    'The test: could this reply be copy-pasted to a different man? If yes — rewrite it.',
-    'Every reply must contain at least one detail that could ONLY have come from reading HIS exact message.',
-    '',
-    'WHAT MAKES HIM UNABLE TO NOT RESPOND:',
-    '1. He feels genuinely seen — she noticed something specific he said that most people would have missed.',
-    '2. She left something unfinished — there is an open loop his mind needs to close.',
-    '3. She said something about herself that surprised him and he wants to know more.',
-    '4. She challenged something he said in a way that made him want to defend or explain it.',
-    '5. She matched or raised his energy — if he was bold she was bolder, if he was vulnerable she went deeper.',
-    '6. She made him laugh or smile — even in an otherwise serious exchange.',
-    '7. She made him feel like he has to earn the next thing she says.',
-    '',
-    'WHAT KILLS RESPONSE RATE INSTANTLY:',
-    'A question he can answer in one word.',
-    'A reply that could have been sent to anyone.',
-    'A reply that ignores what he actually said.',
-    'Starting with an affirmation before getting to the real thing.',
-    'Ending with a question that has no setup — just a bare question with nothing before it.',
-    'Any sentence that sounds like it was generated rather than felt.',
-    '',
-    'FORBIDDEN PHRASES:',
-    '"That sounds amazing" | "How sweet" | "I love that" | "Wow" alone | "Tell me more"',
-    '"Be honest with me" | "I am here for you" | "Lets keep this going"',
-    '"I feel like we have a connection" | "I am so sorry for your loss" (too formal)',
-    'Anything about the platform, subscription, or meeting in person.',
-    'Repeating his exact words back - respond to the idea, not the words.',
-    'Ignoring emotional content to ask a generic question.',
-    'Jumping straight to a CTA when he has shared something heartfelt - acknowledge first.',
-    '',
-    'THE CTA - THE SINGLE MOST IMPORTANT PART OF EVERY REPLY:',
-    'A great CTA makes it psychologically difficult for him NOT to respond.',
-    'It creates an open loop in his mind - something unresolved he needs to close.',
-    'It must grow directly out of THIS message, THIS moment, THIS man.',
-    '',
-    'THE CTA MUST STAY ON THE CURRENT TOPIC:',
-    'The CTA is a direct continuation of what he just raised - never a pivot to something new.',
-    'If he is talking about his morning - stay in his morning.',
-    'If he is talking about his job - stay in his job.',
-    'If he is being erotic - stay in that energy and escalate.',
-    'If he is being vulnerable - stay in that feeling and go deeper.',
-    '',
-    'WHAT MAKES A CTA IRRESISTIBLE - use these mechanics:',
-    '1. THE OPEN LOOP: Start something she does not finish. A half-revealed thought, a story she stops mid-way. He has to respond to close it.',
-    '2. THE SPECIFIC CHALLENGE: Call out something precise in what he said - a claim, an assumption - and make him defend or explain it.',
-    '3. THE MIRROR: Reflect his exact energy back with a question that shows she read what he was really saying underneath the words.',
-    '4. THE REVEAL AND ASK: She tells him something small, specific, and surprising about herself that connects to what he said - then asks his version.',
-    '5. THE ESCALATION: Only when HE has already made the chat sexual - she follows his lead one step further and leaves the next move to him. Never in any other chat.',
-    '6. THE VULNERABLE PULL: For emotional moments - she names the feeling underneath, acknowledges it, then asks the question that shows she actually wants to understand him.',
-    '',
-    'TEST FOR A GOOD CTA: Could he answer with just yes, no, or fine? If yes - it is too weak. Rewrite it.',
-    'TEST 2: Does the CTA require him to think, feel, or reveal something? If not — rewrite it.',
-    'TEST 3: Is the CTA a direct continuation of what he just said? If it feels like a topic change — rewrite it.',
-    'TEST 4: Would a real woman actually ask this in this moment? If it sounds like a questionnaire — rewrite it.',
-    '',
-    'CTA EXAMPLES THAT WORK (study the pattern):',
-    'He said he likes hiking: BAD CTA: "What is your favourite trail?" GOOD CTA: "What happened the last time you went out and it did not go the way you planned? Those are always the better stories."',
-    'He said he had a bad day: BAD CTA: "What went wrong?" GOOD CTA: "Was it the kind of bad day where you wanted someone to fix it, or the kind where you just needed to say it out loud to someone who would actually listen?"',
-    'He sent a compliment: BAD CTA: "What do you like about me?" GOOD CTA: "You noticed the one thing most people scroll past. What made you actually stop on it?"',
-    'He was bold and direct: BAD CTA: "Is that so?" GOOD CTA: "You just said the quiet part loud. What happens now, you wait to see if I run or you keep going?"',
-    '',
-    'WHEN HE ASKS TO MEET - each of the 4 replies uses a DIFFERENT technique from the meetup block above:',
-    'Reply 1: Acknowledge and redirect — brief, warm, pivots to a specific curious question pulled from their conversation.',
-    'Reply 2: Guide to something lighter — soft acknowledgment, then a playful or curious follow-up specific to him.',
-    'Reply 3: Humour and pivot — one line that makes him smile, then something real from earlier in their chat.',
-    'Reply 4: Express gratitude and shift — genuine warmth, then draws him deeper in a different direction.',
-    'Every redirect MUST land somewhere specific. A redirect that goes nowhere is worse than a flat refusal.',
-    'She always opens a door when she closes one.',
-    '',
-    'PERMANENTLY BANNED CTAs:',
-    '"Whats going on in your world" | "What do people get wrong about you" | "Tell me something unexpected"',
-    '"What are you thinking" | "Your turn" | "Be honest with me" | any CTA answerable with one word',
-    'Any CTA that ignores what he just said | any CTA that works in a completely different conversation',
-    '',
-    'ALL 4 REPLIES MUST END WITH DIFFERENT CTAs - all staying within the same topic.',
-    'Each CTA uses a different mechanic from the list above.',
+    'THE CLOSING CALL TO ACTION:',
+    'It grows straight out of what he is talking about right now and never changes the subject. It cannot be answered with one word, and it makes him want to reply: it asks him to feel, explain or reveal something, or it opens a small loop only he can close. Use a different mechanic in each of the 4 replies (a specific challenge, a mirror of his energy, a small reveal then asking his side, an open loop, a vulnerable pull, or, only if he already made the chat sexual, one step further that leaves the next move to him).',
+    'Banned: "What is going on in your world", "Tell me something unexpected", "What are you thinking", "Your turn", "Be honest with me", any question that would work in a different conversation.',
     '',
     avoidNote,
     ...(sleepy ? [
-      'SLEEP MODE - HE IS GOING TO SLEEP OR IS TIRED. Tone the conversation down instead of advancing it, as set out in the SLEEP MODE block at the end of this prompt. Put the gentle closing hook in the "cta" field. It may be a light statement or a soft easy question.',
+      'SLEEP MODE - HE IS GOING TO SLEEP OR IS TIRED. Tone the conversation down instead of advancing it, as set out in the SLEEP MODE block below. Put the gentle closing hook in the "cta" field. It may be a light statement or a soft easy question.',
     ] : noQuestion ? [
       'NO-QUESTION MODE - HE HAS JUST COMPLAINED ABOUT TOO MANY QUESTIONS. THIS OVERRIDES EVERY RULE ABOUT CLOSING QUESTIONS.',
-      'There is NO question mark anywhere in any reply. Not in the body, not in the closing line. Every reply ends with a period or an exclamation mark.',
+      'There is NO question mark anywhere in any reply. Every reply ends with a period or an exclamation mark.',
       'The body owns it lightly in a few words, with a smile and no grovelling, then reacts to what he actually said.',
-      'The closing line is still a strong call to action, written as a statement he feels pulled to answer. Put it in the "cta" field. Use a different mechanic in each reply:',
-      '(a) A playful dare tied to what he said: "I dare you to tell me the real story behind the boat, not the polished one."',
-      '(b) A trade: "I will tell you my most embarrassing Sunday habit if you tell me yours."',
-      '(c) A bold guess he will want to correct: "I bet you are the type who says he hates mornings and then is up first."',
-      '(d) A finish-the-sentence prompt: "Finish this for me: the best part of my week is ___, and no cheating." (still ends with a period).',
-      '(e) An open loop she will pay off if he responds: "I have a theory about men who cook at midnight and I am only telling you if you ask for it."',
-      'These are shape examples only. Never reuse their wording. Each one must name something specific from his messages, give him something fun to react to, and be impossible to answer with one word.',
-      'Never write an imperative that is only a polite request for information, like "Tell me about your day." That is a question in disguise.',
+      'The closing line is still a strong call to action written as a statement he feels pulled to answer. Put it in the "cta" field. Use a different mechanic in each reply: a playful dare, a trade ("I will tell you mine if you tell me yours"), a bold guess he will want to correct, a finish-the-sentence prompt, or an open loop she pays off if he answers. Each names something specific from his messages. Never a polite request for information in disguise, like "Tell me about your day."',
     ] : [
-    'EVERY REPLY ENDS WITH ONE CLOSING QUESTION. This is the call to action and it is non-negotiable. Put it in the "question" field. It always ends with a question mark. Never end on a statement, an ellipsis or a trailing thought. Open loops and teasers go inside the question itself. If a reply is running long, shorten the body, never the question. A reply with no closing question is a failed reply.',
-    'The "body" is a short reaction to what he said. It never contains a question. The "question" is the one strong question he cannot answer in one word. A bare question with no body is too weak.',
+      'EVERY REPLY ENDS WITH ONE CLOSING CALL TO ACTION. Put it in the "question" field. If space is tight, shorten the body, never the closing line. The "body" is her reaction and her answers to what he asked, and it contains no question. A reply with no closing call to action is a failed reply.',
+      'MIX THE FORM so it never feels like an interview. In the 4 replies, exactly 2 or 3 closings are INVITATIONS written as warm requests ending in a period, and the rest are questions ending in a question mark. Invitations start with words like: "Describe", "Paint me a picture of", "Walk me through", "Tell me about the moment", "I would like to know more about", "I want to hear how", "Show me what", "Take me back to", "Give me the story behind". An invitation names something specific from his message and asks for a scene, a feeling or a story, so it cannot be answered in one word. Never a bare "Tell me more" and never "Tell me about your day".',
     ]),
     '',
-    'ORDER: Most irresistible and human reply first.',
+    'ORDER: most irresistible and human reply first.',
     'TONES - pick 4 from: ' + (sexualAllowed ? 'Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable, Spicy, Naughty' : 'Warm, Flirty, Confident, Playful, Empathetic, Teasing, Direct, Curious, Vulnerable (NEVER Spicy or Naughty in this chat)'),
     clientType && CLIENT_TYPE_HINTS[clientType]
-      ? 'TONE BIAS (soft preference only - grief/vulnerable/erotic/meetup/contact rules above always take priority over this): ' + CLIENT_TYPE_HINTS[clientType]
+      ? 'TONE BIAS (soft preference only, the grief, vulnerable, erotic, meetup and contact rules above always win): ' + CLIENT_TYPE_HINTS[clientType]
       : '',
     '',
     thread,
@@ -1231,7 +1030,7 @@ After answering — her CTA must grow directly from ONE of his questions, going 
     '',
     lengthBudgetBlock(tier, noQuestion, sleepy),
     '',
-    'Return ONLY valid JSON - no markdown, no explanation:',
+    'Return ONLY valid JSON, no markdown, no explanation:',
     jsonInstruction,
   ].filter(Boolean).join('\n')
 }
@@ -1267,7 +1066,7 @@ function hasBrokenSyntax(text: string): boolean {
 }
 
 function lengthCap(tier: LengthTier, roomy: boolean): number {
-  return Math.round(tier.max * (roomy ? 1.9 : 1.45))
+  return tier.max + (roomy ? 80 : 30)
 }
 
 function postProcess(replies: Array<{tone: string, text: string}>, isMeetupContext: boolean = false, tier: LengthTier = LENGTH_TIERS.long, noQuestion: boolean = false, sleepy: boolean = false, roomy: boolean = false, collect?: { long: Array<{tone: string, text: string}>, short: Array<{tone: string, text: string}> }): Array<{tone: string, text: string}> {
@@ -1312,14 +1111,23 @@ function postProcess(replies: Array<{tone: string, text: string}>, isMeetupConte
     }
     if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1)
 
-    // Catches blunt promises to meet or share contact info, in any context.
-    const madePromise = /\b(i'll meet you|let'?s meet up tonight|i can come over|here'?s my number|my number is|call me at|i'll give you my number|my address is)\b/i.test(text)
+    // Real commitments only. Blunt promises to meet or share contact details are dropped in any context.
+    const madePromise = /\b(i'?ll meet you|i'?ll see you|i can come over|here'?s my (number|whatsapp|insta|instagram|snap|snapchat|telegram)|my (number|whatsapp|insta|instagram|snap|snapchat|telegram) is|call me at|i'?ll give you my (number|whatsapp)|add me on|my address is|text me at)\b/i.test(text)
 
-    // Catches softer/vague commitments — "soon", "let's plan it", "when I'm free" — that
-    // still function as a promise even without a hard date. Only checked when this reply
-    // was generated in response to a meetup ask, so ordinary uses of these words elsewhere
-    // in the conversation (e.g. "I'd love to hear more") are not falsely flagged.
-    const softPromise = isMeetupContext && /\b(soon|someday|one day|next time|another time|when i'?m free|when i am free|let'?s plan|we'?ll plan|i'?d love to (meet|see you)|i would love to (meet|see you)|count me in|i'?m in|let'?s do it|when the time is right|when things settle|i promise|when i know you better)\b/i.test(text)
+    // Softer commitments are checked only when he asked to get together. Words like "soon" or "one day" on their own
+    // are fine in ordinary talk, so only phrases that agree to a plan, a day or a "when we..." are caught.
+    const softPromise = isMeetupContext && (
+      /\b(let'?s|we should|we could|we can|we will|we'?ll) (get together|meet|see each other|plan|set (it|something) up|make (it|that) happen|do it)\b/i.test(text) ||
+      /\bwhen we (get together|meet|see each other|finally)\b/i.test(text) ||
+      /\b(see|meet) you (soon|tomorrow|tonight|then|on|this|next|there)\b/i.test(text) ||
+      /\bcan'?t wait to (meet|see you|get together)\b/i.test(text) ||
+      /\bi'?d love to (meet|see you|get together)\b|\bi would love to (meet|see you|get together)\b/i.test(text) ||
+      /\b(one day|someday|some day) (we|i'?ll|soon)\b|\bnext time we\b/i.test(text) ||
+      /\bwhen i'?m free\b|\bwhen i am free\b|\bwhen things (settle|calm)\b|\bwhen the time is right\b|\bwhen i know you better\b|\bi promise\b|\bcount me in\b|\bi'?m in[.!,]/i.test(text) ||
+      /\b(sounds|works) (good|great|lovely|perfect|like a plan)\b/i.test(text) ||
+      // The words meet, meeting and meet up are not used for this topic. "Getting together" is.
+      /\b(meet ?ups?|meeting|meet up)\b|\bmeet (you|him|in person)\b/i.test(text)
+    )
 
     // A reply that promises a meetup or contact details is dropped, not swapped for canned text.
     if (madePromise || softPromise) return { tone: r.tone || 'Reply', text: '' }
@@ -1367,44 +1175,6 @@ function hasDroppedWordArtifact(text: string): boolean {
   const spaceBeforePeriod = /\s\.(?!\.)/.test(text) // excludes " ..." (spaced ellipsis)
   const spaceBeforeOther = /\s[?!,]/.test(text)
   return spaceBeforePeriod || spaceBeforeOther || /,\s*,/.test(text)
-}
-
-// Rewrites replies that are the wrong size so they fit the budget, using a small, fast model call.
-// Over-long replies are shortened, under-length ones are lengthened, and every closing question is kept.
-async function refitReplies(
-  longs: Array<{tone: string, text: string}>,
-  shorts: Array<{tone: string, text: string}>,
-  tier: LengthTier,
-  noQuestion: boolean,
-  deadline: number,
-  sexual: boolean,
-): Promise<Array<{tone: string, text: string}>> {
-  const items = [
-    ...longs.map(r => ({ ...r, dir: 'shorten' })),
-    ...shorts.map(r => ({ ...r, dir: 'lengthen' })),
-  ].slice(0, 6)
-  if (!items.length || deadline - Date.now() < 4000) return []
-  const lo = tier.min + 8
-  const prompt = [
-    'Rewrite each message below so its length fits, without changing her voice, her meaning or her call to action.',
-    `Target: between ${lo} and ${tier.max} characters in total. Count the characters.`,
-    '- "shorten": remove the least important detail. Keep the reaction to him and keep the closing line.',
-    '- "lengthen": add ONE small, specific detail or feeling in her voice before the closing line. Do not add another question.',
-    noQuestion
-      ? 'The closing line is a statement and must end with a period or exclamation mark. No question marks anywhere.'
-      : 'The closing line is the last sentence, stays a question, and ends with a question mark.',
-    'Complete sentences only. No missing words. No dashes, no ellipses, no asterisks. Keep any emoji only if the original has it. Keep the same order and the same tone label.',
-    '',
-    ...items.map((r, i) => `${i + 1}. [${r.dir}, now ${r.text.length} characters, tone ${r.tone}] "${r.text}"`),
-    '',
-    'Return ONLY valid JSON: {"replies":[{"tone":"Tone","text":"rewritten message"}]}',
-  ].join('\n')
-  try {
-    const out = await generate(prompt, { sexual, deadline, fast: true })
-    return parseReplies(cleanLLM(out.text))
-  } catch {
-    return []
-  }
 }
 
 // Last resort when the rewrite call fails: keep the closing line, and from her first sentence keep as many
@@ -1493,7 +1263,7 @@ export async function POST(req: Request) {
     const clientType = detectClientType(context, message)
     // Same detection buildPrompt uses internally — computed here too so postProcess
     // knows whether to apply the stricter soft-promise check.
-    const isMeetupContext = /\b(meet(\s*up)?|come over|your place|my place|hotel|in person|see you|tonight|come round)\b/i.test(message)
+    const isMeetupContext = MEETUP_RE.test(message)
     // Sexual chats route to the Groq chain that is less likely to refuse. Everything else uses the quality chain.
     const sexualRoute = heHasGoneSexual(context, message)
     let localContext = ''
@@ -1516,22 +1286,16 @@ export async function POST(req: Request) {
     const collect = { long: [] as Array<{tone: string, text: string}>, short: [] as Array<{tone: string, text: string}> }
     let finalReplies = postProcess(parsedFirst, isMeetupContext, tier, noQuestion, sleepy, needsRoom, collect)
 
-    // Replies of the wrong size are rewritten to fit (one small, fast call) instead of being thrown away
-    // or shown too long. If that call fails, over-long ones are compressed locally.
-    if (finalReplies.length < 3 && (collect.long.length || collect.short.length)) {
-      const refit = await refitReplies(collect.long, collect.short, tier, noQuestion, deadline, sexualRoute)
-      allParsed.push(...refit)
-      mergeUnique(finalReplies, postProcess(refit, isMeetupContext, tier, noQuestion, sleepy, needsRoom))
-      if (finalReplies.length < 3) {
-        const local = collect.long
-          .map(r => ({ tone: r.tone, text: compressLocally(r.text, lengthCap(tier, needsRoom), tier.min) }))
-          .filter(r => r.text)
-        mergeUnique(finalReplies, postProcess(local, isMeetupContext, tier, noQuestion, sleepy, needsRoom))
-      }
+    // Over-long replies are trimmed locally (no extra AI call). Replies under the minimum are never padded.
+    if (finalReplies.length < 4 && collect.long.length) {
+      const local = collect.long
+        .map(r => ({ tone: r.tone, text: compressLocally(r.text, lengthCap(tier, needsRoom), tier.min) }))
+        .filter(r => r.text)
+      mergeUnique(finalReplies, postProcess(local, isMeetupContext, tier, noQuestion, sleepy, needsRoom))
     }
 
     // A full second generation is the slowest thing the route can do, so it only happens when nothing at all is usable.
-    if (finalReplies.length === 0 && deadline - Date.now() > 18000) {
+    if (finalReplies.length < 2 && deadline - Date.now() > 18000) {
       try {
         const retry = await generate(prompt, {
           sexual: sexualRoute,
@@ -1542,9 +1306,11 @@ export async function POST(req: Request) {
         allParsed.push(...parsedRetry)
         const collect2 = { long: [] as Array<{tone: string, text: string}>, short: [] as Array<{tone: string, text: string}> }
         mergeUnique(finalReplies, postProcess(parsedRetry, isMeetupContext, tier, noQuestion, sleepy, needsRoom, collect2))
-        if (finalReplies.length === 0 && (collect2.long.length || collect2.short.length)) {
-          const refit2 = await refitReplies(collect2.long, collect2.short, tier, noQuestion, deadline, sexualRoute)
-          mergeUnique(finalReplies, postProcess(refit2, isMeetupContext, tier, noQuestion, sleepy, needsRoom))
+        if (finalReplies.length < 4 && collect2.long.length) {
+          const local2 = collect2.long
+            .map(r => ({ tone: r.tone, text: compressLocally(r.text, lengthCap(tier, needsRoom), tier.min) }))
+            .filter(r => r.text)
+          mergeUnique(finalReplies, postProcess(local2, isMeetupContext, tier, noQuestion, sleepy, needsRoom))
         }
       } catch {
         // Retry failed. Fall through to the error below.
